@@ -186,11 +186,22 @@ async def generate_trajectory(
             # Final answer
             reasoning, answer = extract_final_answer(raw_text)
 
-            # Extract \boxed{...} if present
+            # Extract \boxed{...} if present and clean LaTeX
             boxed_match = re.search(
                 r'\\boxed\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}', answer
             )
-            boxed_answer = boxed_match.group(1).strip() if boxed_match else ""
+            boxed_answer = ""
+            if boxed_match:
+                raw_boxed = boxed_match.group(1).strip()
+                # Clean LaTeX: \text{X} → X, \, → ,, {,} → ,, etc.
+                cleaned = re.sub(r'\\text\{([^}]*)\}', r'\1', raw_boxed)
+                cleaned = re.sub(r'\\textrm\{([^}]*)\}', r'\1', cleaned)
+                cleaned = re.sub(r'\\[,;!\s]', ' ', cleaned)
+                cleaned = re.sub(r'\{,\}', ',', cleaned)
+                cleaned = re.sub(r'[{}]', '', cleaned)
+                cleaned = cleaned.replace('\\', '').strip()
+                cleaned = re.sub(r'\s+', ' ', cleaned)
+                boxed_answer = cleaned
 
             elapsed = time.time() - t0
             short = boxed_answer or answer[:100]
@@ -323,20 +334,18 @@ async def run_evaluation(
     traj_file = os.path.join(output_dir, "trajectories.jsonl")
     results_file = os.path.join(output_dir, "results.json")
 
-    # Resume support
-    completed = {}  # qid -> list of traj results
+    # Resume support — track by (qid, traj_idx) to avoid duplicates
+    completed = {}  # (qid, traj_idx) -> result
     if resume and os.path.exists(traj_file):
         with open(traj_file) as f:
             for line in f:
                 try:
                     r = json.loads(line)
-                    qid = r["qid"]
-                    if qid not in completed:
-                        completed[qid] = []
-                    completed[qid].append(r)
+                    key = (r["qid"], r.get("traj_idx", 0))
+                    completed[key] = r
                 except Exception:
                     pass
-        print(f"Resuming: {len(completed)} questions already done")
+        print(f"Resuming: {len(completed)} trajectories already done")
 
     # Wait for workers
     base_url = scheduler_url.rstrip("/")
@@ -368,8 +377,9 @@ async def run_evaluation(
         async with sem:
             qid = item["id"]
             # Skip if already done
-            if qid in completed and len(completed[qid]) > traj_idx:
-                return completed[qid][traj_idx]
+            key = (qid, traj_idx)
+            if key in completed:
+                return completed[key]
 
             try:
                 result = await generate_trajectory(
