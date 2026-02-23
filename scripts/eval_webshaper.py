@@ -40,8 +40,8 @@ dotenv.load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from elastic_serving.tools import (
-    STOP_TOKEN_IDS,
-    STOP_TOKEN_IDS_NO_CALL,
+    STOP_TOKENS,
+    STOP_TOKENS_NO_CALL,
     SYSTEM_PROMPT,
     BrowserSession,
     append_tool_round,
@@ -90,15 +90,17 @@ async def generate_trajectory(
     base_url: str,
     model: str,
     tokenizer,
-    http_client: httpx.AsyncClient,
-    openai_http: httpx.AsyncClient,
     traj_idx: int = 0,
     max_tool_calls: int = MAX_TOOL_CALLS,
     max_gen_tokens: int = MAX_GEN_TOKENS,
     temperature: float = TEMPERATURE,
     save_conversation: bool = False,
+    api_sem: Optional[asyncio.Semaphore] = None,
 ) -> Dict[str, Any]:
     """Generate a single research trajectory for one question."""
+    # Per-trajectory clients to avoid shared pool exhaustion
+    http_client = httpx.AsyncClient(timeout=60)
+    openai_http = httpx.AsyncClient(timeout=600)
     browser = BrowserSession(http_client)
     tool_call_count = 0
     tool_calls_log: List[Dict[str, Any]] = []
@@ -115,7 +117,7 @@ async def generate_trajectory(
 
     while True:
         at_limit = tool_call_count >= max_tool_calls
-        stop_ids = STOP_TOKEN_IDS_NO_CALL if at_limit else STOP_TOKEN_IDS
+        stops = STOP_TOKENS_NO_CALL if at_limit else STOP_TOKENS
 
         # Guard against context overflow
         prompt_len = len(tokenizer.encode(prompt))
@@ -124,7 +126,7 @@ async def generate_trajectory(
             remaining = MAX_MODEL_LEN - prompt_len - 256
             if remaining < 256:
                 print(f"  [{tag}] Context full ({prompt_len} tokens), forcing answer")
-                stops = STOP_TOKENS_NO_CALL
+                stops = STOP_TOKENS_NO_CALL  # force final answer
                 remaining = min(2048, MAX_MODEL_LEN - prompt_len - 64)
                 if remaining <= 0:
                     break
@@ -140,7 +142,8 @@ async def generate_trajectory(
                     "prompt": prompt,
                     "max_tokens": max_gen_tokens_this_round,
                     "temperature": temperature,
-                    "stop_token_ids": stop_ids,
+                    "stop": stops,
+                    "skip_special_tokens": False,
                 },
                 headers={"Authorization": "Bearer EMPTY"},
                 timeout=600,
@@ -167,12 +170,22 @@ async def generate_trajectory(
             print(f"  [{tag}] Tool {tool_call_count}/{max_tool_calls}: "
                   f"{ns}.{tool_name}({short_args})")
 
-            if ns == "browser":
-                result = await browser.execute(tool_name, tool_args)
+            # Rate-limit external API calls across all trajectories
+            if api_sem:
+                async with api_sem:
+                    if ns == "browser":
+                        result = await browser.execute(tool_name, tool_args)
+                    else:
+                        result = await execute_custom_tool(
+                            tool_name, tool_args, http_client
+                        )
             else:
-                result = await execute_custom_tool(
-                    tool_name, tool_args, http_client
-                )
+                if ns == "browser":
+                    result = await browser.execute(tool_name, tool_args)
+                else:
+                    result = await execute_custom_tool(
+                        tool_name, tool_args, http_client
+                    )
             tool_calls_log.append({
                 "round": tool_call_count,
                 "tool": f"{ns}.{tool_name}",
@@ -232,6 +245,8 @@ async def generate_trajectory(
             print(f"  [{tag}] Done: {tool_call_count} tools, "
                   f"{elapsed:.1f}s, answer={short}")
 
+            await http_client.aclose()
+            await openai_http.aclose()
             return {
                 "qid": qid,
                 "traj_idx": traj_idx,
@@ -247,6 +262,8 @@ async def generate_trajectory(
             }
 
     # Fallback if we broke out of the loop
+    await http_client.aclose()
+    await openai_http.aclose()
     elapsed = time.time() - t0
     return {
         "qid": qid,
@@ -392,23 +409,12 @@ async def run_evaluation(
             print("Timed out waiting for workers.")
             return
 
-    # Large connection pool + per-request timeouts to avoid deadlocks.
-    # Each external API (Serper, Jina, S2) gets its own pool slots.
-    pool_limits = httpx.Limits(
-        max_connections=concurrency * 4,
-        max_keepalive_connections=concurrency * 2,
-    )
-    http_client = httpx.AsyncClient(
-        timeout=httpx.Timeout(30.0, connect=10.0),
-        limits=pool_limits,
-    )
-    openai_http = httpx.AsyncClient(
-        timeout=httpx.Timeout(600.0, connect=10.0),
-        limits=pool_limits,
-    )
     judge_http = httpx.AsyncClient(timeout=60)
 
     sem = asyncio.Semaphore(concurrency)
+    # Separate semaphore for external API calls (Serper, Jina, S2)
+    # to prevent connection exhaustion under high trajectory concurrency
+    api_sem = asyncio.Semaphore(min(concurrency * 2, 50))
     total_done = 0
 
     async def process_one(item, traj_idx):
@@ -421,34 +427,19 @@ async def run_evaluation(
                 return completed[key]
 
             try:
-                result = await asyncio.wait_for(
-                    generate_trajectory(
-                        question=item["question"],
-                        qid=qid[:8],
-                        base_url=base_url,
-                        model=model,
-                        tokenizer=tokenizer,
-                        http_client=http_client,
-                        openai_http=openai_http,
-                        traj_idx=traj_idx,
-                        max_tool_calls=max_tool_calls,
-                        temperature=temperature,
-                        save_conversation=save_conversation,
-                    ),
-                    timeout=900,  # 15 min hard limit per trajectory
+                result = await generate_trajectory(
+                    question=item["question"],
+                    qid=qid[:8],
+                    base_url=base_url,
+                    model=model,
+                    tokenizer=tokenizer,
+                    traj_idx=traj_idx,
+                    max_tool_calls=max_tool_calls,
+                    temperature=temperature,
+                    save_conversation=save_conversation,
+                    api_sem=api_sem,
                 )
                 result["reference_answer"] = item["answer"]
-            except asyncio.TimeoutError:
-                result = {
-                    "qid": qid,
-                    "traj_idx": traj_idx,
-                    "question": item["question"],
-                    "answer": "",
-                    "reference_answer": item["answer"],
-                    "error": "trajectory timeout (900s)",
-                    "status": "timeout",
-                    "latency_s": 900,
-                }
             except Exception as e:
                 result = {
                     "qid": qid,
@@ -470,7 +461,7 @@ async def run_evaluation(
 
     all_results: List[Dict[str, Any]] = []
     write_buffer: List[str] = []
-    FLUSH_EVERY = 100  # batch writes to disk
+    FLUSH_EVERY = 20  # batch writes to disk
 
     tasks = []
     for item in ds:
