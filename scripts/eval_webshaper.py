@@ -101,6 +101,7 @@ async def generate_trajectory(
     browser = BrowserSession(http_client)
     tool_call_count = 0
     tool_calls_log: List[Dict[str, Any]] = []
+    conversation: List[Dict[str, Any]] = []  # full turn-by-turn log
 
     # Build initial prompt
     prompt = build_initial_prompt(tokenizer, user_message=question)
@@ -177,6 +178,21 @@ async def generate_trajectory(
                 "args": tool_args,
                 "result_len": len(result),
             })
+            conversation.append({
+                "role": "assistant",
+                "content": raw_text,
+                "tool_call": {
+                    "tool": f"{ns}.{tool_name}",
+                    "args": tool_args,
+                },
+            })
+            # Truncate very large tool results for storage
+            result_stored = result[:30000] if len(result) > 30000 else result
+            conversation.append({
+                "role": "tool",
+                "tool": f"{ns}.{tool_name}",
+                "content": result_stored,
+            })
 
             prompt = append_tool_round(
                 prompt, raw_text, tool_name, result, namespace=ns
@@ -203,6 +219,12 @@ async def generate_trajectory(
                 cleaned = re.sub(r'\s+', ' ', cleaned)
                 boxed_answer = cleaned
 
+            conversation.append({
+                "role": "assistant",
+                "content": raw_text,
+                "final_answer": answer,
+            })
+
             elapsed = time.time() - t0
             short = boxed_answer or answer[:100]
             print(f"  [{tag}] Done: {tool_call_count} tools, "
@@ -217,6 +239,7 @@ async def generate_trajectory(
                 "reasoning": reasoning,
                 "num_tool_calls": tool_call_count,
                 "tool_calls": tool_calls_log,
+                "conversation": conversation,
                 "latency_s": elapsed,
                 "status": "success",
             }
@@ -231,6 +254,7 @@ async def generate_trajectory(
         "reasoning": "",
         "num_tool_calls": tool_call_count,
         "tool_calls": tool_calls_log,
+        "conversation": conversation,
         "latency_s": elapsed,
         "status": "context_overflow",
     }
