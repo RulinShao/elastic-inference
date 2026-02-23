@@ -200,7 +200,7 @@ async def generate_trajectory(
             continue
         else:
             # Final answer
-            reasoning, answer = extract_final_answer(raw_text)
+            _reasoning, answer = extract_final_answer(raw_text)
 
             # Extract \boxed{...} if present and clean LaTeX
             boxed_match = re.search(
@@ -236,7 +236,7 @@ async def generate_trajectory(
                 "question": question,
                 "answer": answer,
                 "boxed_answer": boxed_answer,
-                "reasoning": reasoning,
+                "raw_output": raw_text,
                 "num_tool_calls": tool_call_count,
                 "tool_calls": tool_calls_log,
                 "conversation": conversation,
@@ -251,7 +251,7 @@ async def generate_trajectory(
         "traj_idx": traj_idx,
         "question": question,
         "answer": "",
-        "reasoning": "",
+        "raw_output": "",
         "num_tool_calls": tool_call_count,
         "tool_calls": tool_calls_log,
         "conversation": conversation,
