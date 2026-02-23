@@ -267,7 +267,7 @@ async def interactive_chat(
     cprint("╚══════════════════════════════════════════════════╝", C.CYAN)
     cprint(f"  Model:      {model}", C.GRAY)
     cprint(f"  Server:     {base_url}", C.GRAY)
-    cprint(f"  Tools:      browser.search, browser.open, browser.find, snippet_search", C.GRAY)
+    cprint(f"  Tools:      browser.search, browser.open, browser.find, paper_search", C.GRAY)
     cprint(f"  Max calls:  {max_tool_calls} per turn", C.GRAY)
     print()
     cprint("  Commands: /clear  — reset conversation", C.GRAY)

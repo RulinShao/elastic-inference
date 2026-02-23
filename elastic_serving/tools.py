@@ -7,7 +7,7 @@ This module provides:
   - Configuration constants (``STOP_TOKENS``, ``BUILTIN_TOOLS``, ``DEFAULT_MAX_TOOL_CALLS``)
 
 Tool implementations and prompts live in ``elastic_serving.deep_research_utils``:
-  - ``deep_research_tools.py`` — BrowserSession, snippet_search, tool specs
+  - ``deep_research_tools.py`` — BrowserSession, paper_search, tool specs
   - ``prompts.py``             — SYSTEM_PROMPT, MODEL_IDENTITY
 
 This module re-exports the most commonly used symbols so that callers can
@@ -24,12 +24,12 @@ from elastic_serving.deep_research_utils import (  # noqa: F401
     LEGACY_SYSTEM_PROMPT,
     LEGACY_TOOLS,
     MODEL_IDENTITY,
-    SNIPPET_SEARCH_TOOL,
+    PAPER_SEARCH_TOOL,
     SYSTEM_PROMPT,
     BrowserSession,
     execute_custom_tool,
     execute_legacy_tool,
-    snippet_search,
+    paper_search,
 )
 
 # Backward-compat alias
@@ -70,7 +70,7 @@ def build_initial_prompt(
 
     Uses ``builtin_tools=["browser"]`` so the model sees its native browser
     namespace.  ``system_prompt`` goes into the developer message.
-    Custom tools (e.g. snippet_search) go into the ``functions`` namespace.
+    Custom tools (e.g. paper_search) go into the ``functions`` namespace.
     """
     messages: List[Dict[str, str]] = []
     messages.append({"role": "system", "content": system_prompt})
@@ -134,7 +134,7 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, str, dict]]:
     """Parse a tool call from raw model output.
 
     Returns ``(namespace, tool_name, args_dict)`` or ``None``.
-    Handles both ``to=browser.search`` and ``to=functions.snippet_search``.
+    Handles both ``to=browser.search`` and ``to=functions.paper_search``.
     """
     m = re.search(r"to=(browser|functions)\.(\w+)", text)
     if not m:

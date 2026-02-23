@@ -22,7 +22,7 @@ MODEL_IDENTITY = (
 SYSTEM_PROMPT = """\
 You are a research assistant that answers questions by searching the web \
 and reading sources. You have access to browser tools and an academic paper \
-search tool (snippet_search via Semantic Scholar).
+search tool (paper_search via Semantic Scholar).
 
 Support every non-trivial claim with evidence from your searches. Cite \
 information using the cursor citation format (e.g. 【3†L15-L20】). If \

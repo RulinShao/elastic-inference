@@ -9,11 +9,11 @@ Submodules:
 from elastic_serving.deep_research_utils.deep_research_tools import (
     CUSTOM_TOOLS,
     LEGACY_TOOLS,
-    SNIPPET_SEARCH_TOOL,
+    PAPER_SEARCH_TOOL,
     BrowserSession,
     execute_custom_tool,
     execute_legacy_tool,
-    snippet_search,
+    paper_search,
 )
 from elastic_serving.deep_research_utils.prompts import (
     LEGACY_SYSTEM_PROMPT,
@@ -28,11 +28,11 @@ __all__ = [
     "LEGACY_SYSTEM_PROMPT",
     # Tool specs
     "CUSTOM_TOOLS",
-    "SNIPPET_SEARCH_TOOL",
+    "PAPER_SEARCH_TOOL",
     "LEGACY_TOOLS",
     # Tool implementations
     "BrowserSession",
-    "snippet_search",
+    "paper_search",
     "execute_custom_tool",
     "execute_legacy_tool",
 ]

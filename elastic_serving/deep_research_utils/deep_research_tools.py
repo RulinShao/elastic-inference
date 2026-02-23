@@ -7,7 +7,7 @@ Each tool class/function:
 
 Tools are split into two Harmony namespaces:
   ``browser.*``    — built-in (Serper search + Jina reader + local find)
-  ``functions.*``  — custom (snippet_search via Semantic Scholar)
+  ``functions.*``  — custom (paper_search via Semantic Scholar)
 
 To add a new tool:
   1. Define its spec dict (same schema as OpenAI function calling).
@@ -248,7 +248,7 @@ class BrowserSession:
 
 
 # =============================================================================
-# ---- snippet_search (functions.* namespace, Semantic Scholar) ----
+# ---- paper_search (functions.* namespace, Semantic Scholar) ----
 # =============================================================================
 
 SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org/graph/v1/paper/search"
@@ -256,10 +256,10 @@ SEMANTIC_SCHOLAR_FIELDS = (
     "title,abstract,authors,year,url,citationCount,externalIds"
 )
 
-SNIPPET_SEARCH_TOOL = {
+PAPER_SEARCH_TOOL = {
     "type": "function",
     "function": {
-        "name": "snippet_search",
+        "name": "paper_search",
         "description": (
             "Search academic papers via Semantic Scholar. Returns paper "
             "titles, abstracts, authors, publication year, and URLs. "
@@ -301,7 +301,7 @@ SNIPPET_SEARCH_TOOL = {
 }
 
 
-async def snippet_search(
+async def paper_search(
     query: str,
     http_client: httpx.AsyncClient,
     limit: int = 5,
@@ -319,7 +319,7 @@ async def snippet_search(
     if fields_of_study:
         params["fieldsOfStudy"] = fields_of_study
 
-    api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "")
+    api_key = os.getenv("S2_API_KEY", "")
     headers = {}
     if api_key:
         headers["x-api-key"] = api_key
@@ -376,7 +376,7 @@ async def snippet_search(
 # ---- Custom tool registry ----
 # =============================================================================
 
-CUSTOM_TOOLS = [SNIPPET_SEARCH_TOOL]
+CUSTOM_TOOLS = [PAPER_SEARCH_TOOL]
 """All custom tool specs — passed to ``apply_chat_template(tools=...)``."""
 
 
@@ -384,8 +384,8 @@ async def execute_custom_tool(
     name: str, args: dict, http_client: httpx.AsyncClient
 ) -> str:
     """Dispatch a ``functions.*`` tool call (custom tools)."""
-    if name == "snippet_search":
-        return await snippet_search(
+    if name == "paper_search":
+        return await paper_search(
             query=args.get("query", ""),
             http_client=http_client,
             limit=int(args.get("limit", 5)),
