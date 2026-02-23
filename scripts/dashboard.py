@@ -5,7 +5,7 @@ Live dashboard for monitoring cluster + eval job progress.
 Usage:
     python scripts/dashboard.py
     python scripts/dashboard.py --output-dir results/webshaper_full
-    watch -n 5 python scripts/dashboard.py   # auto-refresh
+    watch -n 5 --color python scripts/dashboard.py   # auto-refresh
 """
 
 import argparse
@@ -13,9 +13,43 @@ import json
 import os
 import sys
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 import httpx
+
+# =============================================================================
+# ANSI colors
+# =============================================================================
+
+RESET = "\033[0m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+CYAN = "\033[36m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RED = "\033[31m"
+BLUE = "\033[34m"
+MAGENTA = "\033[35m"
+WHITE = "\033[97m"
+GRAY = "\033[90m"
+BG_BLUE = "\033[44m"
+BG_GREEN = "\033[42m"
+BG_YELLOW = "\033[43m"
+BG_RED = "\033[41m"
+
+
+def bar(value, total, width=25, fill_color=GREEN, empty_color=GRAY):
+    if total == 0:
+        return f"{empty_color}{'░' * width}{RESET}"
+    filled = int(value / total * width)
+    return f"{fill_color}{'█' * filled}{empty_color}{'░' * (width - filled)}{RESET}"
+
+
+def pct(value, total):
+    if total == 0:
+        return "  -"
+    return f"{value / total * 100:5.1f}%"
 
 
 def main():
@@ -25,12 +59,14 @@ def main():
     args = parser.parse_args()
 
     traj_file = os.path.join(args.output_dir, "trajectories.jsonl")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    print("=" * 62)
-    print("  Elastic Inference — Dashboard")
-    print("=" * 62)
-    from datetime import datetime
-    print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    # Header
+    print()
+    print(f"  {BOLD}{CYAN}╔══════════════════════════════════════════════════════╗{RESET}")
+    print(f"  {BOLD}{CYAN}║         Elastic Inference — Live Dashboard          ║{RESET}")
+    print(f"  {BOLD}{CYAN}╚══════════════════════════════════════════════════════╝{RESET}")
+    print(f"  {DIM}{now}{RESET}")
     print()
 
     # ---- Cluster ----
@@ -41,38 +77,49 @@ def main():
         ready = status.get("ready_workers", 0)
         loading = status.get("loading_workers", 0)
         pending = status.get("pending_slurm_jobs", 0)
-        print(f"  -- Cluster: {model} --")
-        print(f"  Workers: {ready} ready, {loading} loading, {pending} pending SLURM")
+
+        print(f"  {BOLD}{WHITE}Cluster{RESET}  {DIM}{model}{RESET}")
+        w_parts = []
+        if ready:
+            w_parts.append(f"{GREEN}{ready} ready{RESET}")
+        if loading:
+            w_parts.append(f"{YELLOW}{loading} loading{RESET}")
+        if pending:
+            w_parts.append(f"{DIM}{pending} pending{RESET}")
+        print(f"  Workers: {', '.join(w_parts)}")
         print()
 
-        # vLLM metrics per worker
+        # vLLM per-worker
         workers = [w for w in status.get("workers", []) if w["status"] == "READY"]
         if workers:
-            print(f"  {'Host':<22} {'Running':>8} {'Waiting':>8} {'KV Cache':>10}")
-            print(f"  {'-'*52}")
+            print(f"  {DIM}{'Host':<22} {'Running':>8} {'Waiting':>8} {'KV Cache':>10}{RESET}")
             for w in workers:
                 try:
                     m = httpx.get(f"http://{w['ip_address']}:{w['port']}/metrics", timeout=2)
-                    text = m.text
-                    run = wait = kv = "?"
-                    for line in text.split("\n"):
+                    run = wait = kv_val = "?"
+                    for line in m.text.split("\n"):
                         if line.startswith("vllm:num_requests_running{"):
                             run = line.split()[-1]
                         elif line.startswith("vllm:num_requests_waiting{"):
                             wait = line.split()[-1]
                         elif line.startswith("vllm:kv_cache_usage_perc{"):
-                            kv = f"{float(line.split()[-1])*100:.1f}%"
-                    print(f"  {w['hostname']:<22} {run:>8} {wait:>8} {kv:>10}")
+                            kv_val = float(line.split()[-1]) * 100
+
+                    kv_str = f"{kv_val:.1f}%" if isinstance(kv_val, float) else "?"
+                    run_color = GREEN if float(run) > 0 else DIM
+                    wait_color = YELLOW if float(wait) > 0 else DIM
+                    kv_color = RED if isinstance(kv_val, float) and kv_val > 80 else GREEN
+                    print(f"  {BOLD}{w['hostname']:<22}{RESET} {run_color}{run:>8}{RESET} {wait_color}{wait:>8}{RESET} {kv_color}{kv_str:>10}{RESET}")
                 except Exception:
                     print(f"  {w['hostname']:<22} {'?':>8} {'?':>8} {'?':>10}")
     except Exception:
-        print(f"  Scheduler unreachable at {args.scheduler_url}")
+        print(f"  {RED}Scheduler unreachable at {args.scheduler_url}{RESET}")
 
     print()
 
     # ---- Eval Progress ----
     if not os.path.exists(traj_file):
-        print(f"  No eval results at {traj_file}")
+        print(f"  {DIM}No eval results at {traj_file}{RESET}")
         return
 
     trajs = []
@@ -84,6 +131,7 @@ def main():
                 pass
 
     n = len(trajs)
+    target = 2000
     qids = set(t["qid"] for t in trajs)
     n_q = len(qids)
 
@@ -95,16 +143,14 @@ def main():
             tool_counts[tc["tool"]] += 1
             total_tools += 1
 
-    # Time stats
     times = [t.get("latency_s", 0) for t in trajs if t.get("latency_s", 0) > 0]
     avg_time = sum(times) / max(len(times), 1)
     total_time_h = sum(times) / 3600
-
-    # Status
     statuses = Counter(t.get("status", "?") for t in trajs)
     n_boxed = sum(1 for t in trajs if t.get("boxed_answer"))
+    n_err = statuses.get("error", 0)
 
-    # Quick accuracy (substring match)
+    # Accuracy
     by_qid = {}
     for t in trajs:
         qid = t["qid"]
@@ -126,38 +172,52 @@ def main():
         if any_match:
             pass_count += 1
 
-    print(f"  -- Eval Progress ({args.output_dir}) --")
-    print(f"  Trajectories:  {n}/2000 ({n/20:.0f}%)")
-    print(f"  Questions:     {n_q}/500")
-    print(f"  Avg time/traj: {avg_time:.0f}s")
-    print(f"  Total GPU time: {total_time_h:.1f}h")
-    print(f"  Boxed answers: {n_boxed}/{n} ({n_boxed/max(n,1)*100:.0f}%)")
-    print(f"  Status: {dict(statuses)}")
+    # Progress section
+    print(f"  {BOLD}{WHITE}Eval Progress{RESET}")
+    print(f"  {bar(n, target)} {BOLD}{n}{RESET}/{target} trajectories ({n/max(target,1)*100:.0f}%)")
+    print(f"  {bar(n_q, 500, fill_color=BLUE)} {BOLD}{n_q}{RESET}/500 questions")
+    print()
+    print(f"  {DIM}Avg time/traj:{RESET}  {BOLD}{avg_time:.0f}s{RESET}    "
+          f"{DIM}Total GPU:{RESET} {BOLD}{total_time_h:.1f}h{RESET}    "
+          f"{DIM}Boxed:{RESET} {n_boxed}/{n} ({n_boxed/max(n,1)*100:.0f}%)"
+          f"{'   ' + RED + str(n_err) + ' errors' + RESET if n_err else ''}")
     print()
 
     # Tool breakdown
-    print(f"  -- Tool Calls ({total_tools} total, {total_tools/max(n,1):.1f}/traj) --")
-    for tool, cnt in tool_counts.most_common():
-        bar_len = int(cnt / max(total_tools, 1) * 30)
-        bar = "\u2588" * bar_len
-        print(f"  {tool:30s} {cnt:5d} ({cnt/max(total_tools,1)*100:4.0f}%) {bar}")
+    print(f"  {BOLD}{WHITE}Tool Calls{RESET}  {DIM}{total_tools} total, {total_tools/max(n,1):.1f}/traj{RESET}")
+    tool_colors = {
+        "browser.search": CYAN,
+        "browser.open": BLUE,
+        "browser.find": MAGENTA,
+        "functions.paper_search": YELLOW,
+        "functions.pubmed_search": GREEN,
+    }
+    for tool, cnt in tool_counts.most_common(6):
+        tc = tool_colors.get(tool, DIM)
+        pct_val = cnt / max(total_tools, 1) * 100
+        bar_len = int(pct_val / 100 * 25)
+        print(f"  {tc}{'█' * bar_len}{'░' * (25 - bar_len)}{RESET} "
+              f"{tc}{tool:<30}{RESET} {BOLD}{cnt:>5}{RESET} {DIM}({pct_val:4.0f}%){RESET}")
     print()
 
-    # Accuracy estimate
-    print(f"  -- Quick Accuracy (substring match, not LLM judge) --")
-    print(f"  Traj accuracy:  {correct}/{n} ({correct/max(n,1)*100:.1f}%)")
-    print(f"  pass@k (est):   {pass_count}/{n_q} ({pass_count/max(n_q,1)*100:.1f}%)")
+    # Accuracy
+    traj_acc = correct / max(n, 1) * 100
+    pass_k = pass_count / max(n_q, 1) * 100
+    acc_color = GREEN if traj_acc >= 50 else YELLOW if traj_acc >= 30 else RED
+    pass_color = GREEN if pass_k >= 70 else YELLOW if pass_k >= 50 else RED
+
+    print(f"  {BOLD}{WHITE}Accuracy{RESET}  {DIM}(substring match estimate){RESET}")
+    print(f"  Traj accuracy:  {acc_color}{BOLD}{traj_acc:.1f}%{RESET}  ({correct}/{n})")
+    print(f"  pass@k (est):   {pass_color}{BOLD}{pass_k:.1f}%{RESET}  ({pass_count}/{n_q})")
     print()
 
     # ETA
     if n > 0 and avg_time > 0:
-        remaining = 2000 - n
-        # Rough: with concurrency, actual wall time is much less
-        eta_s = remaining * avg_time / 32  # assume ~32 effective concurrency
-        eta_m = eta_s / 60
-        print(f"  ETA (rough):    ~{eta_m:.0f} min ({remaining} trajectories left)")
+        remaining = target - n
+        eta_m = remaining * avg_time / 32 / 60
+        print(f"  {DIM}ETA ~{eta_m:.0f} min  ({remaining} trajectories left){RESET}")
+    print()
 
 
 if __name__ == "__main__":
     main()
-
