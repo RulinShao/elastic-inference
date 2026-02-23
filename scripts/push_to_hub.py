@@ -56,24 +56,6 @@ def build_readme(results, rows, repo_id):
     has_conv = sum(1 for r in rows if r.get("conversation"))
 
     readme = f"""---
-dataset_info:
-  features:
-  - name: qid
-    dtype: string
-  - name: question
-    dtype: string
-  - name: reference_answer
-    dtype: string
-  - name: boxed_answer
-    dtype: string
-  - name: correct
-    dtype: bool
-  - name: question_accuracy
-    dtype: float64
-  - name: num_tool_calls
-    dtype: int64
-  - name: conversation
-    dtype: string
 tags:
 - deep-research
 - tool-use
