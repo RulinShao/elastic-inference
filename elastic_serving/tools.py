@@ -39,44 +39,24 @@ BUILTIN_TOOLS: List[str] = ["browser"]
 DEFAULT_MAX_TOOL_CALLS = 15
 """Default cap on tool calls per user turn."""
 
-# Harmony special tokens are single tokens (e.g. <|call|> = 200012).
-# vLLM's `stop` (string matching) doesn't work because decode with
-# skip_special_tokens=True strips them.  Use `stop_token_ids` instead.
+# Harmony special tokens (<|call|>, <|end|>, etc.) are single tokens.
+# To make vLLM's string-based `stop` matching work, we must pass
+# `skip_special_tokens: false` in the request so the tokens appear
+# in the decoded output text.
 #
-# Key insight: <|end|> appears after EVERY channel (analysis, commentary,
-# final), so it's NOT a valid stop token — the model generates multiple
-# <|end|> within a single turn.  Instead we stop at:
-#   <|call|>  (200012) — tool call boundary
-#   <|return|> (200002) — true EOS, generated after final answer
-STOP_TOKEN_IDS = [200012, 200002]  # <|call|>, <|return|>
-"""vLLM stop_token_ids for Harmony generation."""
-
-STOP_TOKEN_IDS_NO_CALL = [200002]  # <|return|> only
-"""stop_token_ids that force a final answer (no more tool calls)."""
-
-# Keep string versions for reference / non-vLLM backends
+# <|end|> appears after EVERY channel (analysis, commentary, final),
+# so it's NOT a valid stop token.  We stop at:
+#   <|call|>   — tool call boundary
+#   <|return|> — true EOS, generated after final answer
 STOP_TOKENS = ["<|call|>", "<|return|>"]
+"""vLLM stop strings for Harmony generation."""
+
 STOP_TOKENS_NO_CALL = ["<|return|>"]
+"""Stop strings that force a final answer (no more tool calls)."""
 
-
-def get_stop_token_ids(tokenizer) -> list:
-    """Resolve stop token IDs from the tokenizer (portable)."""
-    ids = []
-    for t in ["<|call|>", "<|return|>"]:
-        encoded = tokenizer.encode(t, add_special_tokens=False)
-        if len(encoded) == 1:
-            ids.append(encoded[0])
-    return ids
-
-
-def get_stop_token_ids_no_call(tokenizer) -> list:
-    """Resolve stop token IDs without <|call|> (portable)."""
-    ids = []
-    for t in ["<|return|>"]:
-        encoded = tokenizer.encode(t, add_special_tokens=False)
-        if len(encoded) == 1:
-            ids.append(encoded[0])
-    return ids
+# Extra vLLM request params needed for Harmony special token handling
+VLLM_EXTRA_BODY = {"skip_special_tokens": False}
+"""Must be included in every /v1/completions request."""
 
 
 # =============================================================================
@@ -175,9 +155,9 @@ def parse_tool_call(text: str) -> Optional[Tuple[str, str, dict]]:
     tool_name = m.group(2)
     after = text[m.end():]
 
-    # Strategy 1: <|message|> present (special tokens in text)
+    # Strategy 1: <|message|> AFTER the tool name (not from start of text!)
     msg_match = re.search(
-        r"<\|message\|>(.*?)(?:<\|call\|>|<\|end\|>|$)", text, re.DOTALL
+        r"<\|message\|>(.*?)(?:<\|call\|>|<\|end\|>|$)", after, re.DOTALL
     )
     if msg_match:
         args_str = msg_match.group(1).strip()
