@@ -96,12 +96,13 @@ async def generate_trajectory(
     temperature: float = TEMPERATURE,
     save_conversation: bool = False,
     api_sem: Optional[asyncio.Semaphore] = None,
+    blocked_domains: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Generate a single research trajectory for one question."""
     # Per-trajectory clients to avoid shared pool exhaustion
     http_client = httpx.AsyncClient(timeout=60)
     openai_http = httpx.AsyncClient(timeout=600)
-    browser = BrowserSession(http_client)
+    browser = BrowserSession(http_client, blocked_domains=blocked_domains)
     tool_call_count = 0
     tool_calls_log: List[Dict[str, Any]] = []
     conversation: List[Dict[str, Any]] = [] if save_conversation else None
@@ -363,6 +364,7 @@ async def run_evaluation(
     resume: bool,
     judge_model: str,
     save_conversation: bool = False,
+    blocked_domains: Optional[List[str]] = None,
 ):
     import datasets
 
@@ -438,6 +440,7 @@ async def run_evaluation(
                     temperature=temperature,
                     save_conversation=save_conversation,
                     api_sem=api_sem,
+                    blocked_domains=blocked_domains,
                 )
                 result["reference_answer"] = item["answer"]
             except Exception as e:
@@ -693,6 +696,9 @@ Examples:
     parser.add_argument("--save-full-trajectories", action="store_true",
                         help="Save full conversation (tool responses + reasoning) in output. "
                              "Off by default for faster eval.")
+    parser.add_argument("--blocked-domains", type=str, nargs="*", default=None,
+                        help="Domains to block from search results and URL opening. "
+                             "E.g. --blocked-domains huggingface.co arxiv.org")
     args = parser.parse_args()
 
     # Auto-detect model
@@ -727,6 +733,7 @@ Examples:
         resume=args.resume,
         judge_model=args.judge_model,
         save_conversation=args.save_full_trajectories,
+        blocked_domains=args.blocked_domains,
     ))
 
 

@@ -37,8 +37,13 @@ class BrowserSession:
     - ``find`` returns matching lines with line numbers
     """
 
-    def __init__(self, http_client: httpx.AsyncClient):
+    def __init__(
+        self,
+        http_client: httpx.AsyncClient,
+        blocked_domains: Optional[List[str]] = None,
+    ):
         self.http_client = http_client
+        self.blocked_domains = blocked_domains or []
         self._cursor_counter = 0
         self._pages: Dict[int, Dict[str, Any]] = {}
         self._search_results: Dict[int, List[Dict[str, Any]]] = {}
@@ -71,6 +76,14 @@ class BrowserSession:
             return f"Search error: {e}"
 
         results = data.get("organic", [])
+
+        # Filter out blocked domains
+        if self.blocked_domains:
+            results = [
+                r for r in results
+                if not any(d in r.get("link", "") for d in self.blocked_domains)
+            ]
+
         if not results:
             return f"No results found for: {query}"
 
@@ -120,6 +133,8 @@ class BrowserSession:
 
         # id as a full URL string
         if isinstance(id, str) and id.startswith("http"):
+            if self.blocked_domains and any(d in id for d in self.blocked_domains):
+                return f"Error: domain blocked. URL: {id[:80]}"
             target_url = id
         # id as a search-result number
         elif id is not None and id != -1:
