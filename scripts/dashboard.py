@@ -3,14 +3,15 @@
 Live dashboard for monitoring cluster + eval job progress.
 
 Usage:
-    python scripts/dashboard.py
-    python scripts/dashboard.py --output-dir results/webshaper_full
-    watch -n 5 --color python scripts/dashboard.py   # auto-refresh
+    python scripts/dashboard.py                  # auto-refresh every 10s
+    python scripts/dashboard.py --once           # print once and exit
+    python scripts/dashboard.py --interval 5     # refresh every 5s
 """
 
 import argparse
 import json
 import os
+import subprocess
 import sys
 from collections import Counter
 from datetime import datetime
@@ -52,12 +53,8 @@ def pct(value, total):
     return f"{value / total * 100:5.1f}%"
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--scheduler-url", default=os.environ.get("ELASTIC_SERVING_URL", "http://localhost:8780"))
-    parser.add_argument("--output-dir", default="results/webshaper_full")
-    args = parser.parse_args()
-
+def render(args):
+    """Render one frame of the dashboard."""
     traj_file = os.path.join(args.output_dir, "trajectories.jsonl")
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -217,6 +214,38 @@ def main():
         eta_m = remaining * avg_time / 32 / 60
         print(f"  {DIM}ETA ~{eta_m:.0f} min  ({remaining} trajectories left){RESET}")
     print()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Live dashboard for elastic inference")
+    parser.add_argument("--scheduler-url", default=os.environ.get("ELASTIC_SERVING_URL", "http://localhost:8780"))
+    parser.add_argument("--output-dir", default="results/webshaper_full")
+    parser.add_argument("--once", action="store_true", help="Print once and exit")
+    parser.add_argument("--interval", type=int, default=10, help="Refresh interval in seconds")
+    parser.add_argument("--_render", action="store_true", help=argparse.SUPPRESS)
+    args = parser.parse_args()
+
+    if args._render or args.once:
+        # Called by watch or --once: just render one frame
+        render(args)
+    else:
+        # Auto-invoke watch --color with the same args
+        cmd = [
+            "watch", "-n", str(args.interval), "--color", "-t",
+            sys.executable, __file__,
+            "--_render",
+            "--scheduler-url", args.scheduler_url,
+            "--output-dir", args.output_dir,
+        ]
+        try:
+            os.execvp("watch", cmd)
+        except FileNotFoundError:
+            # Fallback if watch not available: loop manually
+            import time
+            while True:
+                os.system("clear")
+                render(args)
+                time.sleep(args.interval)
 
 
 if __name__ == "__main__":
