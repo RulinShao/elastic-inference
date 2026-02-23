@@ -96,12 +96,13 @@ async def generate_trajectory(
     max_tool_calls: int = MAX_TOOL_CALLS,
     max_gen_tokens: int = MAX_GEN_TOKENS,
     temperature: float = TEMPERATURE,
+    save_conversation: bool = False,
 ) -> Dict[str, Any]:
     """Generate a single research trajectory for one question."""
     browser = BrowserSession(http_client)
     tool_call_count = 0
     tool_calls_log: List[Dict[str, Any]] = []
-    conversation: List[Dict[str, Any]] = []  # full turn-by-turn log
+    conversation: List[Dict[str, Any]] = [] if save_conversation else None
 
     # Build initial prompt
     prompt = build_initial_prompt(tokenizer, user_message=question)
@@ -178,21 +179,21 @@ async def generate_trajectory(
                 "args": tool_args,
                 "result_len": len(result),
             })
-            conversation.append({
-                "role": "assistant",
-                "content": raw_text,
-                "tool_call": {
+            if save_conversation:
+                result_stored = result[:30000] if len(result) > 30000 else result
+                conversation.append({
+                    "role": "assistant",
+                    "content": raw_text,
+                    "tool_call": {
+                        "tool": f"{ns}.{tool_name}",
+                        "args": tool_args,
+                    },
+                })
+                conversation.append({
+                    "role": "tool",
                     "tool": f"{ns}.{tool_name}",
-                    "args": tool_args,
-                },
-            })
-            # Truncate very large tool results for storage
-            result_stored = result[:30000] if len(result) > 30000 else result
-            conversation.append({
-                "role": "tool",
-                "tool": f"{ns}.{tool_name}",
-                "content": result_stored,
-            })
+                    "content": result_stored,
+                })
 
             prompt = append_tool_round(
                 prompt, raw_text, tool_name, result, namespace=ns
@@ -219,11 +220,12 @@ async def generate_trajectory(
                 cleaned = re.sub(r'\s+', ' ', cleaned)
                 boxed_answer = cleaned
 
-            conversation.append({
-                "role": "assistant",
-                "content": raw_text,
-                "final_answer": answer,
-            })
+            if save_conversation:
+                conversation.append({
+                    "role": "assistant",
+                    "content": raw_text,
+                    "final_answer": answer,
+                })
 
             elapsed = time.time() - t0
             short = boxed_answer or answer[:100]
@@ -343,6 +345,7 @@ async def run_evaluation(
     temperature: float,
     resume: bool,
     judge_model: str,
+    save_conversation: bool = False,
 ):
     import datasets
 
@@ -417,6 +420,7 @@ async def run_evaluation(
                     traj_idx=traj_idx,
                     max_tool_calls=max_tool_calls,
                     temperature=temperature,
+                    save_conversation=save_conversation,
                 )
                 result["reference_answer"] = item["answer"]
             except Exception as e:
@@ -439,29 +443,43 @@ async def run_evaluation(
     print(f"{'='*60}\n")
 
     all_results: List[Dict[str, Any]] = []
+    write_buffer: List[str] = []
+    FLUSH_EVERY = 100  # batch writes to disk
+
     tasks = []
     for item in ds:
         for t in range(num_trajectories):
             tasks.append((item, t))
 
-    # Process and stream results to file
+    def flush_buffer():
+        if not write_buffer:
+            return
+        with open(traj_file, "a") as writer:
+            writer.write("".join(write_buffer))
+        write_buffer.clear()
+
     async_tasks = [asyncio.create_task(process_one(item, t)) for item, t in tasks]
 
-    with open(traj_file, "a") as writer:
-        for coro in asyncio.as_completed(async_tasks):
-            result = await coro
-            all_results.append(result)
-            writer.write(json.dumps(result, ensure_ascii=False) + "\n")
-            writer.flush()
+    for coro in asyncio.as_completed(async_tasks):
+        result = await coro
+        all_results.append(result)
+        write_buffer.append(json.dumps(result, ensure_ascii=False) + "\n")
 
-            done_pct = total_done / len(tasks) * 100
-            if total_done % 10 == 0 or total_done == len(tasks):
-                print(f"[{total_done}/{len(tasks)} ({done_pct:.0f}%)] "
-                      f"qid={result.get('qid', '?')[:8]} "
-                      f"t={result.get('traj_idx', '?')} "
-                      f"status={result.get('status', '?')} "
-                      f"tools={result.get('num_tool_calls', '?')} "
-                      f"time={result.get('latency_s', 0):.1f}s")
+        if len(write_buffer) >= FLUSH_EVERY:
+            flush_buffer()
+            print(f"  [saved {len(all_results)}/{len(tasks)} to disk]")
+
+        done_pct = total_done / len(tasks) * 100
+        if total_done % 50 == 0 or total_done == len(tasks):
+            print(f"[{total_done}/{len(tasks)} ({done_pct:.0f}%)] "
+                  f"qid={result.get('qid', '?')[:8]} "
+                  f"t={result.get('traj_idx', '?')} "
+                  f"status={result.get('status', '?')} "
+                  f"tools={result.get('num_tool_calls', '?')} "
+                  f"time={result.get('latency_s', 0):.1f}s")
+
+    # Flush remaining
+    flush_buffer()
 
     # ---- Judge answers ----
     print(f"\n{'='*60}")
@@ -657,6 +675,9 @@ Examples:
                         help="Resume from existing trajectories file")
     parser.add_argument("--judge-model", type=str, default=JUDGE_MODEL,
                         help=f"LLM judge model (default: {JUDGE_MODEL})")
+    parser.add_argument("--save-full-trajectories", action="store_true",
+                        help="Save full conversation (tool responses + reasoning) in output. "
+                             "Off by default for faster eval.")
     args = parser.parse_args()
 
     # Auto-detect model
@@ -690,6 +711,7 @@ Examples:
         temperature=args.temperature,
         resume=args.resume,
         judge_model=args.judge_model,
+        save_conversation=args.save_full_trajectories,
     ))
 
 
