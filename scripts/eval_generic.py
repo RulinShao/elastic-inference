@@ -217,11 +217,15 @@ async def run_eval(args):
         ds = ds.select(range(min(args.num_samples, len(ds))))
 
     # Add IDs if missing
+    # Normalize column names: support 'query' as alias for 'question'
+    q_col = "question" if "question" in ds.column_names else "query"
+    a_col = "answer"
+
     has_id = "id" in ds.column_names
     def get_id(row, idx):
         if has_id:
             return str(row["id"])
-        return hashlib.md5(row["question"].encode()).hexdigest()[:8]
+        return hashlib.md5(row[q_col].encode()).hexdigest()[:8]
 
     # Auto-detect model
     if not args.model:
@@ -281,16 +285,16 @@ async def run_eval(args):
                 return completed[(qid, traj_idx)]
             try:
                 result = await generate_trajectory(
-                    question=row["question"], qid=qid, base_url=base_url,
+                    question=row[q_col], qid=qid, base_url=base_url,
                     model=args.model, tokenizer=tokenizer, traj_idx=traj_idx,
                     max_tool_calls=args.max_tool_calls, temperature=args.temperature,
                     save_conversation=args.save_full_trajectories,
                     api_sem=api_sem, blocked_domains=args.blocked_domains,
                 )
-                result["reference_answer"] = row.get("answer", "")
+                result["reference_answer"] = row.get(a_col, "")
             except Exception:
-                result = {"qid": qid, "traj_idx": traj_idx, "question": row["question"],
-                          "answer": "", "reference_answer": row.get("answer", ""),
+                result = {"qid": qid, "traj_idx": traj_idx, "question": row[q_col],
+                          "answer": "", "reference_answer": row.get(a_col, ""),
                           "error": traceback.format_exc(), "status": "error", "latency_s": 0}
             total_done += 1
             return result
