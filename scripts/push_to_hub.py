@@ -45,7 +45,8 @@ def build_readme(results, rows, repo_id):
     tool_table = ""
     for tool, cnt in tool_counts.most_common():
         pct = cnt / max(total_tools, 1) * 100
-        tool_table += f"| `{tool}` | {cnt:,} | {pct:.0f}% |\n"
+        pct_str = f"{pct:.1f}%" if pct < 1 and cnt > 0 else f"{pct:.0f}%"
+        tool_table += f"| `{tool}` | {cnt:,} | {pct_str} |\n"
 
     # Contamination
     n_contam = sum(1 for r in rows if r.get("contaminated", False))
