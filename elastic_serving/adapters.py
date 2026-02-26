@@ -460,7 +460,16 @@ class Qwen3Adapter(ToolAdapter):
     Tool calls use XML-style ``<tool_call><function=name>`` format.
     Thinking uses ``<think>...</think>`` blocks.
     Tool responses are wrapped in ``<tool_response>`` inside user messages.
+
+    Parameters
+    ----------
+    enable_thinking : bool
+        If False, disables the ``<think>`` reasoning blocks for faster
+        generation (no-think mode). Default True.
     """
+
+    def __init__(self, enable_thinking: bool = True):
+        self.enable_thinking = enable_thinking
 
     @property
     def stop_tokens(self) -> List[str]:
@@ -499,12 +508,15 @@ class Qwen3Adapter(ToolAdapter):
 
         tools = custom_tools if custom_tools is not None else self._build_tools(enable_python)
 
-        return tokenizer.apply_chat_template(
-            messages,
-            tools=tools,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
+        kwargs: Dict[str, Any] = {
+            "tools": tools,
+            "tokenize": False,
+            "add_generation_prompt": True,
+        }
+        if not self.enable_thinking:
+            kwargs["enable_thinking"] = False
+
+        return tokenizer.apply_chat_template(messages, **kwargs)
 
     def parse_tool_call(
         self, text: str
@@ -573,6 +585,7 @@ class Qwen3Adapter(ToolAdapter):
         #   </tool_response><|im_end|>
         #   <|im_start|>assistant
         #   <think>
+        think_prefix = "<think>\n" if self.enable_thinking else "<think>\n\n</think>\n\n"
         return (
             f"{prompt}{model_output}"
             f"</tool_call><|im_end|>\n"
@@ -581,7 +594,7 @@ class Qwen3Adapter(ToolAdapter):
             f"{tool_response}\n"
             f"</tool_response><|im_end|>\n"
             f"<|im_start|>assistant\n"
-            f"<think>\n"
+            f"{think_prefix}"
         )
 
     def extract_final_answer(self, raw_text: str) -> Tuple[str, str]:
@@ -604,10 +617,11 @@ class Qwen3Adapter(ToolAdapter):
     def append_user_turn(
         self, prompt: str, final_answer_text: str, user_message: str
     ) -> str:
+        think_prefix = "<think>\n" if self.enable_thinking else "<think>\n\n</think>\n\n"
         return (
             f"{prompt}{final_answer_text}<|im_end|>\n"
             f"<|im_start|>user\n{user_message}<|im_end|>\n"
-            f"<|im_start|>assistant\n<think>\n"
+            f"<|im_start|>assistant\n{think_prefix}"
         )
 
 
@@ -639,7 +653,11 @@ def detect_adapter(tokenizer: Any) -> ToolAdapter:
     )
 
 
-def get_adapter(model_format: str, tokenizer: Any = None) -> ToolAdapter:
+def get_adapter(
+    model_format: str,
+    tokenizer: Any = None,
+    enable_thinking: bool = True,
+) -> ToolAdapter:
     """Get a ToolAdapter by name or auto-detect.
 
     Parameters
@@ -648,15 +666,22 @@ def get_adapter(model_format: str, tokenizer: Any = None) -> ToolAdapter:
         ``"harmony"``, ``"qwen3"``, or ``"auto"``.
     tokenizer : Any, optional
         Required when ``model_format="auto"``.
+    enable_thinking : bool
+        For Qwen3 adapter, whether to enable ``<think>`` reasoning.
+        Ignored for Harmony adapter.
     """
     if model_format == "harmony":
         return HarmonyAdapter()
     elif model_format == "qwen3":
-        return Qwen3Adapter()
+        return Qwen3Adapter(enable_thinking=enable_thinking)
     elif model_format == "auto":
         if tokenizer is None:
             raise ValueError("tokenizer required for auto-detection")
-        return detect_adapter(tokenizer)
+        adapter = detect_adapter(tokenizer)
+        if isinstance(adapter, Qwen3Adapter):
+            adapter.enable_thinking = enable_thinking
+        return adapter
     else:
         raise ValueError(f"Unknown model format: {model_format!r}")
+
 

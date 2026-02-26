@@ -275,8 +275,10 @@ async def run_eval(args):
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
 
     # Create model-specific adapter
-    adapter = get_adapter(args.model_format, tokenizer)
-    print(f"Format: {type(adapter).__name__}")
+    enable_thinking = not getattr(args, 'no_think', False)
+    adapter = get_adapter(args.model_format, tokenizer, enable_thinking=enable_thinking)
+    think_str = " (no-think)" if not enable_thinking else ""
+    print(f"Format: {type(adapter).__name__}{think_str}")
 
     # Wait for workers
     base_url = args.scheduler_url.rstrip("/")
@@ -466,6 +468,8 @@ def main():
                     help="Enable python code execution tool (requires jupyter_client + ipykernel)")
     p.add_argument("--model-format", choices=["harmony", "qwen3", "auto"], default="auto",
                     help="Model chat template format (default: auto-detect from tokenizer)")
+    p.add_argument("--no-think", action="store_true",
+                    help="Disable reasoning/thinking mode (Qwen3 only, faster but less accurate)")
     args = p.parse_args()
 
     if not args.model:
