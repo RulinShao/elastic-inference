@@ -36,6 +36,7 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 dotenv.load_dotenv()
 
+from elastic_serving.adapters import get_adapter, ToolAdapter
 from elastic_serving.tools import (
     DEFAULT_MAX_TOOL_CALLS,
     STOP_TOKENS,
@@ -117,6 +118,7 @@ async def chat_turn(
     prompt: str,
     base_url: str,
     model: str,
+    adapter: ToolAdapter,
     browser: BrowserSession,
     python_session: Optional["PythonSession"] = None,
     http_client: httpx.AsyncClient,
@@ -136,7 +138,7 @@ async def chat_turn(
 
     while True:
         at_limit = tool_call_count >= max_tool_calls
-        stops = STOP_TOKENS_NO_CALL if at_limit else STOP_TOKENS
+        stops = adapter.stop_tokens_no_call if at_limit else adapter.stop_tokens
 
         if verbose:
             prompt_tokens = len(prompt) // 4  # rough estimate
@@ -160,7 +162,7 @@ async def chat_turn(
                         "max_tokens": max_gen_tokens,
                         "temperature": temperature,
                         "stop": stops,
-                        "skip_special_tokens": False,
+                        **adapter.extra_body,
                     },
                     headers={"Authorization": "Bearer EMPTY"},
                     timeout=300,
@@ -206,8 +208,8 @@ async def chat_turn(
                 C.GRAY,
             )
 
-        # Try to parse a browser tool call
-        tool_call = parse_tool_call(raw_text) if not at_limit else None
+        # Try to parse a tool call
+        tool_call = adapter.parse_tool_call(raw_text) if not at_limit else None
 
         if tool_call:
             ns, tool_name, tool_args = tool_call
@@ -229,13 +231,13 @@ async def chat_turn(
             print_tool_result(result)
 
             # Extend raw prompt
-            prompt = append_tool_round(
+            prompt = adapter.format_tool_response(
                 prompt, raw_text, tool_name, result, namespace=ns
             )
             continue
         else:
             # Final answer
-            reasoning, answer = extract_final_answer(raw_text)
+            reasoning, answer = adapter.extract_final_answer(raw_text)
             if reasoning:
                 print_reasoning(reasoning)
             print_answer(answer)
@@ -265,6 +267,9 @@ async def interactive_chat(
     python_session = PythonSession(timeout=120, allowed_dirs=["/tmp/python_sandbox"]) if args.enable_python else None
     if python_session:
         cprint("  Python tool enabled (Jupyter kernel)", C.GREEN)
+
+    # Create model-specific adapter
+    adapter = get_adapter(args.model_format, tokenizer)
 
     base_url = scheduler_url.rstrip("/")
 
@@ -321,16 +326,14 @@ async def interactive_chat(
 
         # Build prompt
         if turn_count == 0:
-            # First turn: use apply_chat_template for correct Harmony framing
-            raw_prompt = build_initial_prompt(
+            raw_prompt = adapter.build_prompt(
                 tokenizer,
                 user_message=user_input,
                 system_prompt=system_prompt,
                 enable_python=args.enable_python,
             )
         else:
-            # Subsequent turns: extend the raw prompt directly
-            raw_prompt = append_user_turn(raw_prompt, "", user_input)
+            raw_prompt = adapter.append_user_turn(raw_prompt, "", user_input)
 
         turn_count += 1
 
@@ -342,6 +345,7 @@ async def interactive_chat(
             prompt=raw_prompt,
             base_url=base_url,
             model=model,
+            adapter=adapter,
             browser=browser,
             python_session=python_session,
             http_client=http_client,
@@ -422,6 +426,12 @@ Environment Variables:
         "--enable-python",
         action="store_true",
         help="Enable python code execution tool (requires jupyter_client + ipykernel)",
+    )
+    parser.add_argument(
+        "--model-format",
+        choices=["harmony", "qwen3", "auto"],
+        default="auto",
+        help="Model chat template format (default: auto-detect from tokenizer)",
     )
     args = parser.parse_args()
 

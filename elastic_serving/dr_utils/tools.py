@@ -762,19 +762,24 @@ class PythonSession:
         self.kc.wait_for_ready(timeout=30)
         self.timeout = timeout
 
+        # Execution stats
+        self.stats = {"total": 0, "success": 0, "error": 0, "timeout": 0, "no_output": 0}
+
         # Sandbox init: pre-import packages + set working dir
         setup = _PYTHON_SANDBOX_SETUP
         if allowed_dirs:
             first_dir = allowed_dirs[0]
             setup += f"\nos.makedirs({first_dir!r}, exist_ok=True)\nos.chdir({first_dir!r})\n"
-        self.execute(setup)
+        self.execute(setup, _skip_stats=True)
 
-    def execute(self, code: str) -> str:
+    def execute(self, code: str, _skip_stats: bool = False) -> str:
         """Execute *code* in the kernel and return combined output.
 
         Returns stdout, display results, and error tracebacks concatenated.
         Output is truncated to ``MAX_PYTHON_OUTPUT`` characters.
         """
+        if not _skip_stats:
+            self.stats["total"] += 1
         msg_id = self.kc.execute(code)
         outputs: List[str] = []
         deadline = time.time() + self.timeout
@@ -817,6 +822,20 @@ class PythonSession:
         result = "\n".join(outputs).strip()
         if len(result) > MAX_PYTHON_OUTPUT:
             result = result[:MAX_PYTHON_OUTPUT] + f"\n... [output truncated at {MAX_PYTHON_OUTPUT} chars]"
+
+        # Update stats
+        if not _skip_stats:
+            has_error = any("Error" in o or "Traceback" in o for o in outputs)
+            timed_out = any("timed out" in o for o in outputs)
+            if timed_out:
+                self.stats["timeout"] += 1
+            elif has_error:
+                self.stats["error"] += 1
+            elif not result or result == "(no output)":
+                self.stats["no_output"] += 1
+            else:
+                self.stats["success"] += 1
+
         return result if result else "(no output)"
 
     def close(self):

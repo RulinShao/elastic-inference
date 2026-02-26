@@ -28,6 +28,7 @@ dotenv.load_dotenv()
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from elastic_serving.adapters import get_adapter, ToolAdapter
 from elastic_serving.tools import (
     STOP_TOKENS,
     STOP_TOKENS_NO_CALL,
@@ -66,11 +67,17 @@ Respond with a JSON object:
 
 async def generate_trajectory(
     question, qid, base_url, model, tokenizer,
+    adapter: ToolAdapter = None,
     traj_idx=0, max_tool_calls=MAX_TOOL_CALLS,
     max_gen_tokens=MAX_GEN_TOKENS, temperature=TEMPERATURE,
     save_conversation=False, api_sem=None, blocked_domains=None,
     enable_python=False,
 ):
+    # Use adapter if provided, otherwise fall back to legacy Harmony functions
+    if adapter is None:
+        from elastic_serving.adapters import HarmonyAdapter
+        adapter = HarmonyAdapter()
+
     http_client = httpx.AsyncClient(timeout=60)
     openai_http = httpx.AsyncClient(timeout=600)
     browser = BrowserSession(http_client, blocked_domains=blocked_domains)
@@ -79,19 +86,19 @@ async def generate_trajectory(
     tool_calls_log = []
     conversation = [] if save_conversation else None
 
-    prompt = build_initial_prompt(tokenizer, user_message=question, enable_python=enable_python)
+    prompt = adapter.build_prompt(tokenizer, user_message=question, enable_python=enable_python)
     tag = f"qid={qid} t={traj_idx}"
     t0 = time.time()
 
     while True:
         at_limit = tool_call_count >= max_tool_calls
-        stops = STOP_TOKENS_NO_CALL if at_limit else STOP_TOKENS
+        stops = adapter.stop_tokens_no_call if at_limit else adapter.stop_tokens
 
         prompt_len = len(tokenizer.encode(prompt))
         if prompt_len + max_gen_tokens > MAX_MODEL_LEN:
             remaining = MAX_MODEL_LEN - prompt_len - 256
             if remaining < 256:
-                stops = STOP_TOKENS_NO_CALL
+                stops = adapter.stop_tokens_no_call
                 remaining = min(2048, MAX_MODEL_LEN - prompt_len - 64)
                 if remaining <= 0:
                     break
@@ -100,13 +107,14 @@ async def generate_trajectory(
             gen_tokens = max_gen_tokens
 
         try:
+            req_body = {
+                "model": model, "prompt": prompt,
+                "max_tokens": gen_tokens, "temperature": temperature,
+                "stop": stops, **adapter.extra_body,
+            }
             resp = await openai_http.post(
                 f"{base_url}/v1/completions",
-                json={
-                    "model": model, "prompt": prompt,
-                    "max_tokens": gen_tokens, "temperature": temperature,
-                    "stop": stops, "skip_special_tokens": False,
-                },
+                json=req_body,
                 headers={"Authorization": "Bearer EMPTY"}, timeout=600,
             )
             if resp.status_code == 503:
@@ -118,7 +126,7 @@ async def generate_trajectory(
             print(f"  [{tag}] Error: {e}")
             break
 
-        tool_call = parse_tool_call(raw_text) if not at_limit else None
+        tool_call = adapter.parse_tool_call(raw_text) if not at_limit else None
 
         if tool_call:
             ns, tool_name, tool_args = tool_call
@@ -154,9 +162,9 @@ async def generate_trajectory(
                 conversation.append({"role": "tool", "tool": f"{ns}.{tool_name}",
                     "content": result[:30000]})
 
-            prompt = append_tool_round(prompt, raw_text, tool_name, result, namespace=ns)
+            prompt = adapter.format_tool_response(prompt, raw_text, tool_name, result, namespace=ns)
         else:
-            _r, answer = extract_final_answer(raw_text)
+            _r, answer = adapter.extract_final_answer(raw_text)
             boxed_match = re.search(r'\\boxed\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}', answer)
             boxed_answer = ""
             if boxed_match:
@@ -171,28 +179,40 @@ async def generate_trajectory(
                 conversation.append({"role": "assistant", "content": raw_text, "final_answer": answer})
 
             elapsed = time.time() - t0
-            print(f"  [{tag}] Done: {tool_call_count} tools, {elapsed:.1f}s, answer={boxed_answer or answer[:80]}")
+            py_stats = ""
+            if python_session:
+                s = python_session.stats
+                py_stats = f" py={s['total']}({s['success']}ok/{s['error']}err/{s['timeout']}to/{s['no_output']}empty)"
+            print(f"  [{tag}] Done: {tool_call_count} tools, {elapsed:.1f}s,{py_stats} answer={boxed_answer or answer[:80]}")
             await http_client.aclose()
             await openai_http.aclose()
+            py_stats_dict = python_session.stats.copy() if python_session else None
             if python_session:
                 python_session.close()
-            return {
+            result_dict = {
                 "qid": qid, "traj_idx": traj_idx, "question": question,
                 "answer": answer, "boxed_answer": boxed_answer,
                 "num_tool_calls": tool_call_count, "tool_calls": tool_calls_log,
                 "conversation": conversation, "latency_s": elapsed, "status": "success",
             }
+            if py_stats_dict:
+                result_dict["python_stats"] = py_stats_dict
+            return result_dict
 
     await http_client.aclose()
     await openai_http.aclose()
+    py_stats_dict = python_session.stats.copy() if python_session else None
     if python_session:
         python_session.close()
-    return {
+    result_dict = {
         "qid": qid, "traj_idx": traj_idx, "question": question,
         "answer": "", "boxed_answer": "", "num_tool_calls": tool_call_count,
         "tool_calls": tool_calls_log, "conversation": conversation,
         "latency_s": time.time() - t0, "status": "context_overflow",
     }
+    if py_stats_dict:
+        result_dict["python_stats"] = py_stats_dict
+    return result_dict
 
 
 async def judge_answer(question, reference, prediction, http, model=JUDGE_MODEL):
@@ -254,6 +274,10 @@ async def run_eval(args):
     print(f"Model: {args.model}")
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
 
+    # Create model-specific adapter
+    adapter = get_adapter(args.model_format, tokenizer)
+    print(f"Format: {type(adapter).__name__}")
+
     # Wait for workers
     base_url = args.scheduler_url.rstrip("/")
     async with httpx.AsyncClient() as tmp:
@@ -306,7 +330,8 @@ async def run_eval(args):
             try:
                 result = await generate_trajectory(
                     question=row[q_col], qid=qid, base_url=base_url,
-                    model=args.model, tokenizer=tokenizer, traj_idx=traj_idx,
+                    model=args.model, tokenizer=tokenizer, adapter=adapter,
+                    traj_idx=traj_idx,
                     max_tool_calls=args.max_tool_calls, temperature=args.temperature,
                     save_conversation=args.save_full_trajectories,
                     api_sem=api_sem, blocked_domains=args.blocked_domains,
@@ -338,6 +363,21 @@ async def run_eval(args):
         if total_done % 50 == 0 or total_done == n_trajs:
             print(f"[{total_done}/{n_trajs} ({total_done/n_trajs*100:.0f}%)]")
     flush_buffer()
+
+    # Print aggregate python stats if enabled
+    if args.enable_python:
+        agg = {"total": 0, "success": 0, "error": 0, "timeout": 0, "no_output": 0}
+        for r in all_results:
+            ps = r.get("python_stats")
+            if ps:
+                for k in agg:
+                    agg[k] += ps.get(k, 0)
+        if agg["total"] > 0:
+            print(f"\nPython tool stats: {agg['total']} calls — "
+                  f"{agg['success']} success ({agg['success']/agg['total']*100:.0f}%), "
+                  f"{agg['error']} error ({agg['error']/agg['total']*100:.0f}%), "
+                  f"{agg['timeout']} timeout, "
+                  f"{agg['no_output']} no_output ({agg['no_output']/agg['total']*100:.0f}%)")
 
     # Judge
     print(f"\nJudging with {args.judge_model}...")
@@ -424,6 +464,8 @@ def main():
     p.add_argument("--blocked-domains", nargs="*", default=None)
     p.add_argument("--enable-python", action="store_true",
                     help="Enable python code execution tool (requires jupyter_client + ipykernel)")
+    p.add_argument("--model-format", choices=["harmony", "qwen3", "auto"], default="auto",
+                    help="Model chat template format (default: auto-detect from tokenizer)")
     args = p.parse_args()
 
     if not args.model:
