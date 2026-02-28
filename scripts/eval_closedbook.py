@@ -144,7 +144,7 @@ async def generate_closedbook(
             **extra_body,
         }
 
-        for retry in range(5):
+        for retry in range(60):
             resp = await openai_http.post(
                 f"{base_url}/v1/completions",
                 json=req_body,
@@ -152,12 +152,12 @@ async def generate_closedbook(
                 timeout=600,
             )
             if resp.status_code == 503:
-                await asyncio.sleep(10)
+                await asyncio.sleep(15 + min(retry * 5, 60))
                 continue
             resp.raise_for_status()
             break
         else:
-            raise RuntimeError("Server returned 503 after 5 retries")
+            raise RuntimeError("Server returned 503 after 60 retries")
 
         raw_text = resp.json()["choices"][0]["text"]
 
@@ -274,14 +274,16 @@ async def run_eval(args):
     base_urls = raw_urls if len(raw_urls) > 1 else raw_urls[0]
     base_url = raw_urls[0]
 
-    # Wait for server to be ready
+    # Wait for server to be ready (up to ~30 min for model loading)
     print("Waiting for server to be ready...")
+    server_ready = False
     async with httpx.AsyncClient() as tmp:
-        for attempt in range(120):
+        for attempt in range(180):
             try:
                 r = await tmp.get(f"{base_url}/cluster_status", timeout=5)
                 if r.status_code == 200 and r.json().get("ready_workers", 0) > 0:
                     print(f"Cluster: {r.json()['ready_workers']} workers ready")
+                    server_ready = True
                     break
             except Exception:
                 pass
@@ -289,12 +291,16 @@ async def run_eval(args):
                 r = await tmp.get(f"{base_url}/v1/models", timeout=5)
                 if r.status_code == 200:
                     print("Direct vLLM server ready")
+                    server_ready = True
                     break
             except Exception:
                 pass
             if attempt % 6 == 0:
                 print(f"  ... waiting ({attempt * 10}s)")
             await asyncio.sleep(10)
+    if not server_ready:
+        print("ERROR: No workers became ready after 30 min. Exiting.")
+        sys.exit(1)
 
     os.makedirs(args.output_dir, exist_ok=True)
     traj_file = os.path.join(args.output_dir, "trajectories.jsonl")
