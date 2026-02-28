@@ -30,5 +30,6 @@ python -m elastic_serving.scheduler \
     --max-nodes 2 \
     --qos h200_dream_high --partition h200 --account dream \
     --conda-env qwen35 \
-    --engine-extra-args "--language-model-only --gpu-memory-utilization 0.9"
+    --no-prefix-caching \
+    --engine-extra-args "--language-model-only"
 

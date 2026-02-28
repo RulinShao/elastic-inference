@@ -364,6 +364,8 @@ class AdaptiveScheduler:
             worker_cmd += f" --served-model-name {cfg.served_model_name}"
         if cfg.engine_extra_args:
             worker_cmd += f" --engine-extra-args '{cfg.engine_extra_args}'"
+        if not cfg.enable_prefix_caching:
+            worker_cmd += " --no-prefix-caching"
 
         script_lines.append(worker_cmd)
 
@@ -780,6 +782,8 @@ Examples:
     parser.add_argument("--project-root", type=str, default=None)
     parser.add_argument("--log-dir", type=str, default=None)
     parser.add_argument("--host", type=str, default="0.0.0.0")
+    parser.add_argument("--no-prefix-caching", action="store_true",
+                        help="Disable prefix caching on workers (needed for Mamba/hybrid architectures)")
     args = parser.parse_args()
 
     # Build config
@@ -802,6 +806,7 @@ Examples:
         "max_model_len": args.max_model_len,
         "served_model_name": args.served_model_name,
         "engine_extra_args": args.engine_extra_args,
+        "enable_prefix_caching": False if args.no_prefix_caching else None,
         "time_limit": args.time_limit,
         "constraint": args.constraint,
         "slurm_extra": args.slurm_extra,

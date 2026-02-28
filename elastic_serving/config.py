@@ -102,6 +102,7 @@ class SchedulerConfig:
     max_model_len: Optional[int] = None
     served_model_name: Optional[str] = None
     engine_extra_args: str = ""            # extra args for vllm/sglang
+    enable_prefix_caching: bool = True     # disable for Mamba/hybrid architectures
 
     # Scheduler behaviour
     port: int = 8780

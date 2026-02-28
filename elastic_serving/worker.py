@@ -77,6 +77,7 @@ class WorkerDaemon:
         max_model_len: Optional[int] = None,
         served_model_name: Optional[str] = None,
         engine_extra_args: str = "",
+        enable_prefix_caching: bool = True,
         heartbeat_interval: float = 30.0,
     ):
         self.scheduler_url = scheduler_url.rstrip("/")
@@ -89,6 +90,7 @@ class WorkerDaemon:
         self.max_model_len = max_model_len
         self.served_model_name = served_model_name
         self.engine_extra_args = engine_extra_args
+        self.enable_prefix_caching = enable_prefix_caching
         self.heartbeat_interval = heartbeat_interval
 
         self.hostname = socket.gethostname()
@@ -220,12 +222,14 @@ class WorkerDaemon:
                 sys.executable, "-m", "vllm.entrypoints.openai.api_server",
                 "--model", self.model,
                 "--port", str(inst.port),
+                "--host", "0.0.0.0",
                 "--tensor-parallel-size", str(self.tensor_parallel_size),
                 "--gpu-memory-utilization", str(self.gpu_memory_utilization),
                 "--trust-remote-code",
                 "--disable-log-requests",
-                "--enable-prefix-caching",
             ]
+            if self.enable_prefix_caching:
+                cmd.append("--enable-prefix-caching")
             if self.max_model_len is not None:
                 cmd.extend(["--max-model-len", str(self.max_model_len)])
             if self.served_model_name:
@@ -459,6 +463,8 @@ def main():
     parser.add_argument("--max-model-len", type=int, default=None)
     parser.add_argument("--served-model-name", type=str, default=None)
     parser.add_argument("--engine-extra-args", type=str, default="")
+    parser.add_argument("--no-prefix-caching", action="store_true",
+                        help="Disable prefix caching (needed for some architectures like Mamba hybrids)")
     parser.add_argument("--heartbeat-interval", type=float, default=30.0)
     args = parser.parse_args()
 
@@ -473,6 +479,7 @@ def main():
         max_model_len=args.max_model_len,
         served_model_name=args.served_model_name,
         engine_extra_args=args.engine_extra_args,
+        enable_prefix_caching=not args.no_prefix_caching,
         heartbeat_interval=args.heartbeat_interval,
     )
     daemon.run()
