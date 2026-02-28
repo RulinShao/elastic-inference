@@ -274,32 +274,27 @@ async def run_eval(args):
     base_urls = raw_urls if len(raw_urls) > 1 else raw_urls[0]
     base_url = raw_urls[0]
 
-    # Wait for server to be ready (up to ~30 min for model loading)
-    print("Waiting for server to be ready...")
+    # Wait for at least one worker to be ready (up to ~60 min for SLURM queue + model loading)
+    print("Waiting for workers to be ready...", flush=True)
     server_ready = False
     async with httpx.AsyncClient() as tmp:
-        for attempt in range(180):
+        for attempt in range(360):  # 360 × 10s = 60 min
             try:
                 r = await tmp.get(f"{base_url}/cluster_status", timeout=5)
-                if r.status_code == 200 and r.json().get("ready_workers", 0) > 0:
-                    print(f"Cluster: {r.json()['ready_workers']} workers ready")
-                    server_ready = True
-                    break
-            except Exception:
-                pass
-            try:
-                r = await tmp.get(f"{base_url}/v1/models", timeout=5)
                 if r.status_code == 200:
-                    print("Direct vLLM server ready")
-                    server_ready = True
-                    break
+                    data = r.json()
+                    ready = data.get("ready_workers", 0)
+                    if ready > 0:
+                        print(f"Cluster ready: {ready} workers online", flush=True)
+                        server_ready = True
+                        break
             except Exception:
                 pass
             if attempt % 6 == 0:
-                print(f"  ... waiting ({attempt * 10}s)")
+                print(f"  ... waiting ({attempt * 10}s)", flush=True)
             await asyncio.sleep(10)
     if not server_ready:
-        print("ERROR: No workers became ready after 30 min. Exiting.")
+        print("ERROR: No workers became ready after 60 min. Exiting.", flush=True)
         sys.exit(1)
 
     os.makedirs(args.output_dir, exist_ok=True)
