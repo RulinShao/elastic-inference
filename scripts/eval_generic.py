@@ -401,7 +401,26 @@ async def run_eval(args):
                   f"{agg['timeout']} timeout, "
                   f"{agg['no_output']} no_output ({agg['no_output']/agg['total']*100:.0f}%)")
 
-    # Judge
+    # Judge (skip for long-form generation without reference answers)
+    if args.skip_judge:
+        print(f"\nSkipping judge (--skip-judge). Saving trajectories only.")
+        # Save summary without judge results
+        summary = {
+            "dataset": args.dataset, "split": args.split, "model": args.model,
+            "num_questions": len(ds), "num_trajectories_per_q": args.num_trajectories,
+            "total_trajectories": n_trajs, "max_tool_calls": args.max_tool_calls,
+            "temperature": args.temperature,
+        }
+        avg_tools = sum(r.get("num_tool_calls", 0) for r in all_results) / max(len(all_results), 1)
+        summary["avg_tool_calls"] = round(avg_tools, 1)
+        summary["total_results"] = len(all_results)
+        results_file = os.path.join(args.output_dir, "results.json")
+        with open(results_file, "w") as f:
+            json.dump(summary, f, indent=2)
+        print(f"Saved {len(all_results)} trajectories to {traj_file}")
+        print(f"Summary saved to {results_file}")
+        return
+
     print(f"\nJudging with {args.judge_model}...")
     judge_sem = asyncio.Semaphore(10)
 
@@ -490,6 +509,8 @@ def main():
                     help="Model chat template format (default: auto-detect from tokenizer)")
     p.add_argument("--no-think", action="store_true",
                     help="Disable reasoning/thinking mode (Qwen3 only, faster but less accurate)")
+    p.add_argument("--skip-judge", action="store_true",
+                    help="Skip GPT-4o judging (for long-form generation without reference answers)")
     args = p.parse_args()
 
     if not args.model:

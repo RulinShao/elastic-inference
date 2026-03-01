@@ -23,7 +23,7 @@ set -e
 # ---- Config ----
 MODEL="/checkpoint/maestro/models/gpt-oss-120b"
 TP_SIZE=8
-MAX_NODES=2
+MAX_NODES=1
 PORT=8780
 OUTPUT_DIR="/checkpoint/dream/rulin/elastic-serving/results/hle_closedbook_120b"
 DATASET="rl-rag/hle_text_only"
@@ -35,7 +35,7 @@ MAX_GEN_TOKENS=16384
 
 # ---- Setup ----
 source /opt/conda/etc/profile.d/conda.sh
-conda activate rl_verl
+conda activate qwen35
 cd /checkpoint/dream/rulin/elastic-serving
 export PYTHONPATH=".:$PYTHONPATH"
 
@@ -62,8 +62,8 @@ python -m elastic_serving.scheduler \
     --engine vllm \
     --tensor-parallel-size "${TP_SIZE}" \
     --max-nodes "${MAX_NODES}" \
-    --qos h200_lowest --partition h200 --account dream \
-    --conda-env rl_verl \
+    --qos h200_dream_high --partition h200 --account dream \
+    --conda-env qwen35 \
     &
 SCHED_PID=$!
 echo "Scheduler PID: ${SCHED_PID}"
