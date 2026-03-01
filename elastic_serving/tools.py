@@ -23,11 +23,21 @@ from elastic_serving.dr_utils import (  # noqa: F401
     CUSTOM_TOOLS,
     MODEL_IDENTITY,
     PAPER_SEARCH_TOOL,
+    PUBMED_SEARCH_TOOL,
+    PAPER_DETAILS_TOOL,
+    PAPER_CITATIONS_TOOL,
+    READ_PAPER_TOOL,
+    SCHOLAR_SEARCH_TOOL,
     SYSTEM_PROMPT,
     BrowserSession,
     PythonSession,
     execute_custom_tool,
     paper_search,
+    pubmed_search,
+    paper_details,
+    paper_citations,
+    read_paper,
+    scholar_search,
 )
 
 # =============================================================================
