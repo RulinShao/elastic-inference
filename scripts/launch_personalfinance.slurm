@@ -11,7 +11,7 @@
 #SBATCH --output=/checkpoint/dream/rulin/elastic-serving/results/pf_scheduler_%j.log
 
 source /opt/conda/etc/profile.d/conda.sh
-conda activate rl_verl
+conda activate qwen35
 cd /checkpoint/dream/rulin/elastic-serving
 export PYTHONPATH=".:$PYTHONPATH"
 
@@ -27,5 +27,5 @@ python -m elastic_serving.scheduler \
     --max-model-len 131072 \
     --max-nodes 2 \
     --qos h200_dream_high --partition h200 --account dream \
-    --conda-env rl_verl
+    --conda-env qwen35
 

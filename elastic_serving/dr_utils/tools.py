@@ -243,27 +243,43 @@ class BrowserSession:
     # ---- dispatcher ----
 
     async def execute(self, tool_name: str, args: dict) -> str:
-        """Dispatch a ``browser.*`` tool call."""
-        if tool_name == "search":
-            return await self.search(
-                query=args.get("query", ""),
-                topn=args.get("topn", 10),
-            )
-        elif tool_name == "open":
-            return await self.open(
-                id=args.get("id"),
-                cursor=args.get("cursor"),
-                loc=args.get("loc"),
-                num_lines=args.get("num_lines"),
-                view_source=args.get("view_source", False),
-                source=args.get("source"),
-            )
-        elif tool_name == "find":
-            return await self.find(
-                pattern=args.get("pattern", ""),
-                cursor=args.get("cursor"),
-            )
-        return f"Unknown browser tool: {tool_name}"
+        """Dispatch a ``browser.*`` tool call.
+
+        Includes safe type coercion for common model mistakes
+        (e.g. passing ``"3"`` instead of ``3`` for numeric args).
+        """
+
+        def _safe_int(val, default=None):
+            if val is None:
+                return default
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return default
+
+        try:
+            if tool_name == "search":
+                return await self.search(
+                    query=str(args.get("query", "")),
+                    topn=_safe_int(args.get("topn"), 10),
+                )
+            elif tool_name == "open":
+                return await self.open(
+                    id=args.get("id"),
+                    cursor=_safe_int(args.get("cursor")),
+                    loc=_safe_int(args.get("loc")),
+                    num_lines=_safe_int(args.get("num_lines")),
+                    view_source=bool(args.get("view_source", False)),
+                    source=args.get("source"),
+                )
+            elif tool_name == "find":
+                return await self.find(
+                    pattern=str(args.get("pattern", "")),
+                    cursor=_safe_int(args.get("cursor")),
+                )
+            return f"Unknown browser tool: {tool_name}. Available: search, open, find."
+        except Exception as e:
+            return f"Error in browser.{tool_name}: {type(e).__name__}: {e}"
 
 
 # =============================================================================
@@ -861,23 +877,41 @@ CUSTOM_TOOLS = [PAPER_SEARCH_TOOL, PUBMED_SEARCH_TOOL]
 async def execute_custom_tool(
     name: str, args: dict, http_client: httpx.AsyncClient
 ) -> str:
-    """Dispatch a ``functions.*`` tool call (custom tools)."""
-    if name == "paper_search":
-        return await paper_search(
-            query=args.get("query", ""),
-            http_client=http_client,
-            mode=args.get("mode", "snippets"),
-            limit=int(args.get("limit", 5)),
-            year=args.get("year"),
-            fields_of_study=args.get("fields_of_study"),
-            venue=args.get("venue"),
+    """Dispatch a ``functions.*`` tool call (custom tools).
+
+    Includes error handling so bad arguments return a message the model
+    can learn from rather than crashing the trajectory.
+    """
+
+    def _safe_int(val, default):
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return default
+
+    try:
+        if name == "paper_search":
+            return await paper_search(
+                query=str(args.get("query", "")),
+                http_client=http_client,
+                mode=str(args.get("mode", "snippets")),
+                limit=_safe_int(args.get("limit"), 5),
+                year=args.get("year"),
+                fields_of_study=args.get("fields_of_study"),
+                venue=args.get("venue"),
+            )
+        elif name == "pubmed_search":
+            return await pubmed_search(
+                query=str(args.get("query", "")),
+                http_client=http_client,
+                limit=_safe_int(args.get("limit"), 5),
+            )
+    except Exception as e:
+        return (
+            f"Error in functions.{name}: {type(e).__name__}: {e}\n"
+            f"Please check your arguments and try again."
         )
-    elif name == "pubmed_search":
-        return await pubmed_search(
-            query=args.get("query", ""),
-            http_client=http_client,
-            limit=int(args.get("limit", 5)),
-        )
+
     # Model sometimes confuses namespaces (e.g. functions.browser instead
     # of browser.search).  Return a helpful nudge rather than a hard error.
     return (

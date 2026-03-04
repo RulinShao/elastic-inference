@@ -136,7 +136,11 @@ async def generate_trajectory(
             print(f"  [{tag}] Error: {e}")
             break
 
-        tool_call = adapter.parse_tool_call(raw_text) if not at_limit else None
+        try:
+            tool_call = adapter.parse_tool_call(raw_text) if not at_limit else None
+        except Exception as e:
+            print(f"  [{tag}] Parse error: {e}")
+            tool_call = None
 
         if tool_call:
             ns, tool_name, tool_args = tool_call
@@ -144,23 +148,30 @@ async def generate_trajectory(
             short = json.dumps(tool_args, ensure_ascii=False)[:80]
             print(f"  [{tag}] Tool {tool_call_count}/{max_tool_calls}: {ns}.{tool_name}({short})")
 
-            if ns == "python" and python_session:
-                # Python tool: run in thread to avoid blocking the async event loop
-                code = tool_args.get("code", "")
-                result = await asyncio.to_thread(python_session.execute, code)
-            elif api_sem:
-                async with api_sem:
+            try:
+                if ns == "python" and python_session:
+                    # Python tool: run in thread to avoid blocking the async event loop
+                    code = tool_args.get("code", "")
+                    result = await asyncio.to_thread(python_session.execute, code)
+                elif api_sem:
+                    async with api_sem:
+                        if ns == "browser":
+                            result = await browser.execute(tool_name, tool_args)
+                        else:
+                            result = await execute_custom_tool(tool_name, tool_args, http_client)
+                else:
                     if ns == "browser":
                         result = await browser.execute(tool_name, tool_args)
+                    elif ns == "python" and not python_session:
+                        result = "Error: Python tool not enabled. Pass --enable-python to enable."
                     else:
                         result = await execute_custom_tool(tool_name, tool_args, http_client)
-            else:
-                if ns == "browser":
-                    result = await browser.execute(tool_name, tool_args)
-                elif ns == "python" and not python_session:
-                    result = "Error: Python tool not enabled. Pass --enable-python to enable."
-                else:
-                    result = await execute_custom_tool(tool_name, tool_args, http_client)
+            except Exception as e:
+                result = (
+                    f"Error executing {ns}.{tool_name}: {type(e).__name__}: {e}\n"
+                    f"Please check your arguments and try again. "
+                    f"Arguments received: {json.dumps(tool_args, ensure_ascii=False)[:200]}"
+                )
 
             tool_calls_log.append({
                 "round": tool_call_count, "tool": f"{ns}.{tool_name}",

@@ -209,7 +209,11 @@ async def chat_turn(
             )
 
         # Try to parse a tool call
-        tool_call = adapter.parse_tool_call(raw_text) if not at_limit else None
+        try:
+            tool_call = adapter.parse_tool_call(raw_text) if not at_limit else None
+        except Exception as e:
+            cprint(f"  ⚠ Parse error: {e}", C.RED)
+            tool_call = None
 
         if tool_call:
             ns, tool_name, tool_args = tool_call
@@ -217,16 +221,22 @@ async def chat_turn(
             print_tool_call(ns, tool_name, tool_args)
 
             # Execute — browser.*, python, or functions.*
-            if ns == "python" and python_session:
-                code = tool_args.get("code", "")
-                result = await asyncio.to_thread(python_session.execute, code)
-            elif ns == "browser":
-                result = await browser.execute(tool_name, tool_args)
-            elif ns == "python" and not python_session:
-                result = "Error: Python tool not enabled. Pass --enable-python to enable."
-            else:
-                result = await execute_custom_tool(
-                    tool_name, tool_args, http_client
+            try:
+                if ns == "python" and python_session:
+                    code = tool_args.get("code", "")
+                    result = await asyncio.to_thread(python_session.execute, code)
+                elif ns == "browser":
+                    result = await browser.execute(tool_name, tool_args)
+                elif ns == "python" and not python_session:
+                    result = "Error: Python tool not enabled. Pass --enable-python to enable."
+                else:
+                    result = await execute_custom_tool(
+                        tool_name, tool_args, http_client
+                    )
+            except Exception as e:
+                result = (
+                    f"Error executing {ns}.{tool_name}: {type(e).__name__}: {e}\n"
+                    f"Please check your arguments and try again."
                 )
             print_tool_result(result)
 
