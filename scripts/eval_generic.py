@@ -71,7 +71,7 @@ async def generate_trajectory(
     traj_idx=0, max_tool_calls=MAX_TOOL_CALLS,
     max_gen_tokens=MAX_GEN_TOKENS, temperature=TEMPERATURE,
     save_conversation=False, api_sem=None, blocked_domains=None,
-    enable_python=False,
+    enable_python=False, disable_scroll=False,
 ):
     # Use adapter if provided, otherwise fall back to legacy Harmony functions
     if adapter is None:
@@ -80,7 +80,7 @@ async def generate_trajectory(
 
     http_client = httpx.AsyncClient(timeout=60)
     openai_http = httpx.AsyncClient(timeout=600)
-    browser = BrowserSession(http_client, blocked_domains=blocked_domains)
+    browser = BrowserSession(http_client, blocked_domains=blocked_domains, disable_scroll=disable_scroll)
     python_session = PythonSession(timeout=120, allowed_dirs=["/tmp/python_sandbox"]) if enable_python else None
     tool_call_count = 0
     tool_calls_log = []
@@ -297,9 +297,12 @@ async def run_eval(args):
 
     # Create model-specific adapter
     enable_thinking = not getattr(args, 'no_think', False)
-    adapter = get_adapter(args.model_format, tokenizer, enable_thinking=enable_thinking)
+    adapter = get_adapter(args.model_format, tokenizer, enable_thinking=enable_thinking,
+                          reasoning_effort=args.reasoning_effort)
     think_str = " (no-think)" if not enable_thinking else ""
-    print(f"Format: {type(adapter).__name__}{think_str}")
+    effort_str = f" reasoning_effort={args.reasoning_effort}" if args.reasoning_effort else ""
+    scroll_str = " no-scroll" if args.no_scroll else ""
+    print(f"Format: {type(adapter).__name__}{think_str}{effort_str}{scroll_str}")
 
     # Parse URLs (comma-separated for multi-node)
     raw_urls = [u.strip().rstrip("/") for u in args.scheduler_url.split(",")]
@@ -369,6 +372,7 @@ async def run_eval(args):
                     save_conversation=args.save_full_trajectories,
                     api_sem=api_sem, blocked_domains=args.blocked_domains,
                     enable_python=args.enable_python,
+                    disable_scroll=args.no_scroll,
                 )
                 result["reference_answer"] = row.get(a_col, "")
             except Exception:
@@ -512,7 +516,9 @@ def main():
     p.add_argument("--output-dir", required=True)
     p.add_argument("--resume", action="store_true")
     p.add_argument("--judge-model", default=JUDGE_MODEL)
-    p.add_argument("--save-full-trajectories", action="store_true")
+    p.add_argument("--save-full-trajectories", action="store_true", default=True,
+                    help="Save full conversation histories (default: True). Use --no-save-full-trajectories to disable.")
+    p.add_argument("--no-save-full-trajectories", action="store_false", dest="save_full_trajectories")
     p.add_argument("--blocked-domains", nargs="*", default=None)
     p.add_argument("--enable-python", action="store_true",
                     help="Enable python code execution tool (requires jupyter_client + ipykernel)")
@@ -522,6 +528,10 @@ def main():
                     help="Disable reasoning/thinking mode (Qwen3 only, faster but less accurate)")
     p.add_argument("--skip-judge", action="store_true",
                     help="Skip GPT-4o judging (for long-form generation without reference answers)")
+    p.add_argument("--reasoning-effort", default=None,
+                    help="Reasoning effort level for gpt-oss (e.g. 'high'). Only used with Harmony adapter.")
+    p.add_argument("--no-scroll", action="store_true",
+                    help="Disable browser scrolling (loc parameter ignored, scroll-within-page disabled)")
     args = p.parse_args()
 
     if not args.model:

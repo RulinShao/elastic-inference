@@ -45,9 +45,11 @@ class BrowserSession:
         self,
         http_client: httpx.AsyncClient,
         blocked_domains: Optional[List[str]] = None,
+        disable_scroll: bool = False,
     ):
         self.http_client = http_client
         self.blocked_domains = blocked_domains or []
+        self.disable_scroll = disable_scroll
         self._cursor_counter = 0
         self._pages: Dict[int, Dict[str, Any]] = {}
         self._search_results: Dict[int, List[Dict[str, Any]]] = {}
@@ -158,6 +160,12 @@ class BrowserSession:
                 )
         # Scroll within an already-opened page
         elif cursor and cursor != -1 and cursor in self._pages:
+            if self.disable_scroll:
+                return (
+                    "Scrolling is not available. Use browser.search to find "
+                    "new information or browser.find to locate text in the "
+                    "current page."
+                )
             page = self._pages[cursor]
             start = (loc - 1) if loc and loc > 0 else 0
             n = num_lines if num_lines and num_lines > 0 else 50
@@ -208,8 +216,12 @@ class BrowserSession:
             "lines": all_lines,
         }
 
-        start = (loc - 1) if loc and loc > 0 else 0
-        n = num_lines if num_lines and num_lines > 0 else len(all_lines)
+        if self.disable_scroll:
+            start = 0
+            n = len(all_lines)
+        else:
+            start = (loc - 1) if loc and loc > 0 else 0
+            n = num_lines if num_lines and num_lines > 0 else len(all_lines)
         view = all_lines[start : start + n]
         numbered = "\n".join(
             f"L{start + i + 1}: {line}" for i, line in enumerate(view)

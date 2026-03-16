@@ -112,7 +112,18 @@ class HarmonyAdapter(ToolAdapter):
 
     Wraps the existing functions from ``elastic_serving.tools`` with zero
     behavior change.
+
+    Parameters
+    ----------
+    reasoning_effort : str or None
+        If set (e.g. ``"high"``), passed to ``apply_chat_template`` so
+        the Jinja template bakes the effort level into the system prompt.
+        Valid values: ``"low"``, ``"medium"``, ``"high"``. Default ``None``
+        (model default, which is ``"medium"``).
     """
+
+    def __init__(self, reasoning_effort: Optional[str] = None):
+        self.reasoning_effort = reasoning_effort
 
     @property
     def stop_tokens(self) -> List[str]:
@@ -147,6 +158,8 @@ class HarmonyAdapter(ToolAdapter):
             "tokenize": False,
             "add_generation_prompt": True,
         }
+        if self.reasoning_effort:
+            kwargs["reasoning_effort"] = self.reasoning_effort
         tools = custom_tools if custom_tools is not None else CUSTOM_TOOLS
         if tools:
             kwargs["tools"] = tools
@@ -657,6 +670,7 @@ def get_adapter(
     model_format: str,
     tokenizer: Any = None,
     enable_thinking: bool = True,
+    reasoning_effort: Optional[str] = None,
 ) -> ToolAdapter:
     """Get a ToolAdapter by name or auto-detect.
 
@@ -669,9 +683,11 @@ def get_adapter(
     enable_thinking : bool
         For Qwen3 adapter, whether to enable ``<think>`` reasoning.
         Ignored for Harmony adapter.
+    reasoning_effort : str or None
+        If set, passed to Harmony adapter for vLLM request body.
     """
     if model_format == "harmony":
-        return HarmonyAdapter()
+        return HarmonyAdapter(reasoning_effort=reasoning_effort)
     elif model_format == "qwen3":
         return Qwen3Adapter(enable_thinking=enable_thinking)
     elif model_format == "auto":
@@ -680,6 +696,8 @@ def get_adapter(
         adapter = detect_adapter(tokenizer)
         if isinstance(adapter, Qwen3Adapter):
             adapter.enable_thinking = enable_thinking
+        elif isinstance(adapter, HarmonyAdapter):
+            adapter.reasoning_effort = reasoning_effort
         return adapter
     else:
         raise ValueError(f"Unknown model format: {model_format!r}")
