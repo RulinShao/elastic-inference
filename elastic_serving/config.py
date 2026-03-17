@@ -111,6 +111,7 @@ class SchedulerConfig:
     health_check_interval: float = 30.0
     node_acquire_interval: float = 15.0    # how often to try to grab new nodes
     conda_env: str = ""                    # conda env name on workers
+    venv_path: str = ""                    # path to venv on workers (alternative to conda)
 
     # Paths
     project_root: str = ""

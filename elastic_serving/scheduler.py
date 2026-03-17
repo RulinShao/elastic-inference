@@ -325,8 +325,14 @@ class AdaptiveScheduler:
             "",
         ])
 
-        # Conda activation — try common conda install locations
-        if cfg.conda_env:
+        # Environment activation
+        if cfg.venv_path:
+            script_lines.extend([
+                "# Activate venv",
+                f'source {cfg.venv_path}/bin/activate',
+                "",
+            ])
+        elif cfg.conda_env:
             script_lines.extend([
                 "# Activate conda",
                 'for conda_sh in /opt/conda/etc/profile.d/conda.sh "$HOME/miniconda3/etc/profile.d/conda.sh" "$HOME/anaconda3/etc/profile.d/conda.sh"; do',
@@ -779,6 +785,8 @@ Examples:
     parser.add_argument("--node-acquire-interval", type=float, default=None)
     parser.add_argument("--conda-env", type=str, default=None,
                         help="Conda env to activate on worker nodes")
+    parser.add_argument("--venv-path", type=str, default=None,
+                        help="Path to venv to activate on worker nodes (alternative to --conda-env)")
     parser.add_argument("--project-root", type=str, default=None)
     parser.add_argument("--log-dir", type=str, default=None)
     parser.add_argument("--host", type=str, default="0.0.0.0")
@@ -816,6 +824,7 @@ Examples:
         "health_check_interval": args.health_check_interval,
         "node_acquire_interval": args.node_acquire_interval,
         "conda_env": args.conda_env,
+        "venv_path": args.venv_path,
         "project_root": args.project_root,
         "log_dir": args.log_dir,
     }

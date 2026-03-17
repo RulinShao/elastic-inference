@@ -1,0 +1,20 @@
+[project]
+name = "elastic-serving-oss-env"
+version = "0.1.0"
+description = "Isolated Python 3.12 environment for gpt-oss-120b evaluation (matching AgentIR oss_env)."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "flashinfer-python==0.5.3",
+    "gpt-oss[all]==0.0.8",
+    "numpy==2.2.6",
+    "openai==2.14.0",
+    "openai-harmony==0.0.8",
+    "tokenizers==0.22.1",
+    "torch==2.9.0",
+    "transformers==4.57.3",
+    "vllm==0.13.0",
+    # Additional deps for elastic-serving eval
+    "httpx>=0.25.0",
+    "python-dotenv>=1.0.0",
+    "datasets>=3.0.0",
+]
