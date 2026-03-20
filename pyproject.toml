@@ -1,12 +1,12 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "elastic-serving"
 version = "0.1.0"
 description = "Auto-scaling vLLM/SGLang inference on SLURM low-priority resources"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.100.0",
     "uvicorn>=0.23.0",
@@ -25,10 +25,16 @@ vllm = [
 sglang = [
     "sglang[all]>=0.2.0",
 ]
+oss = [
+    "aiohttp>=3.9.0",
+    "datasets>=4.0.0",
+    "gpt-oss>=0.0.9",
+    "openai-harmony>=0.0.4",
+    "vllm==0.13.0",
+]
 
 [project.scripts]
 elastic-serving = "elastic_serving.client:main"
 
 [tool.setuptools.packages.find]
 include = ["elastic_serving*"]
-

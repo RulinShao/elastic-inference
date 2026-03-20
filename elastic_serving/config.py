@@ -95,7 +95,7 @@ class SchedulerConfig:
     # Model serving — DP + TP parallelism
     # Each node runs (gpus_per_node / tensor_parallel_size) server instances.
     # E.g. 8 GPUs, TP=4 → 2 vLLM instances per node (DP=2).
-    engine: str = "vllm"                   # "vllm" or "sglang"
+    engine: str = "vllm"                   # "vllm", "sglang", or "oss"
     model: str = ""
     tensor_parallel_size: int = 1
     gpu_memory_utilization: float = 0.90
@@ -103,6 +103,7 @@ class SchedulerConfig:
     served_model_name: Optional[str] = None
     engine_extra_args: str = ""            # extra args for vllm/sglang
     enable_prefix_caching: bool = True     # disable for Mamba/hybrid architectures
+    reasoning_effort: Optional[str] = None # forwarded to the OSS Harmony runtime
 
     # Scheduler behaviour
     port: int = 8780

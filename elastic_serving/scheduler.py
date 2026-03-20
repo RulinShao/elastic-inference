@@ -366,6 +366,8 @@ class AdaptiveScheduler:
             worker_cmd += f" --engine-extra-args '{cfg.engine_extra_args}'"
         if not cfg.enable_prefix_caching:
             worker_cmd += " --no-prefix-caching"
+        if cfg.reasoning_effort:
+            worker_cmd += f" --reasoning-effort {cfg.reasoning_effort}"
 
         script_lines.append(worker_cmd)
 
@@ -606,6 +608,10 @@ def create_app(scheduler: AdaptiveScheduler) -> FastAPI:
     async def embeddings(request: Request):
         return await _proxy_post(request, "/embeddings", scheduler, http_client)
 
+    @app.post("/v1/oss/run_one")
+    async def oss_run_one(request: Request):
+        return await _proxy_post(request, "/oss/run_one", scheduler, http_client)
+
     return app
 
 
@@ -754,7 +760,7 @@ Examples:
     )
     parser.add_argument("--config", type=str, help="Path to JSON config file")
     parser.add_argument("--model", type=str, help="Model name/path to serve")
-    parser.add_argument("--engine", choices=["vllm", "sglang"], default="vllm")
+    parser.add_argument("--engine", choices=["vllm", "sglang", "oss"], default="vllm")
     parser.add_argument("--qos", type=str, default=None, help="SLURM QoS (default: h200_lowest)")
     parser.add_argument("--partition", type=str, default=None, help="SLURM partition (default: h200)")
     parser.add_argument("--account", type=str, default=None, help="SLURM account (default: dream)")
@@ -781,6 +787,8 @@ Examples:
                         help="Conda env to activate on worker nodes")
     parser.add_argument("--project-root", type=str, default=None)
     parser.add_argument("--log-dir", type=str, default=None)
+    parser.add_argument("--reasoning-effort", type=str, default=None,
+                        help="OSS Harmony reasoning effort")
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--no-prefix-caching", action="store_true",
                         help="Disable prefix caching on workers (needed for Mamba/hybrid architectures)")
@@ -818,6 +826,7 @@ Examples:
         "conda_env": args.conda_env,
         "project_root": args.project_root,
         "log_dir": args.log_dir,
+        "reasoning_effort": args.reasoning_effort,
     }
     for key, val in cli_overrides.items():
         if val is not None:

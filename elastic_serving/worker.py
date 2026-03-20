@@ -79,6 +79,7 @@ class WorkerDaemon:
         engine_extra_args: str = "",
         enable_prefix_caching: bool = True,
         heartbeat_interval: float = 30.0,
+        reasoning_effort: Optional[str] = None,
     ):
         self.scheduler_url = scheduler_url.rstrip("/")
         self.engine = engine
@@ -92,6 +93,7 @@ class WorkerDaemon:
         self.engine_extra_args = engine_extra_args
         self.enable_prefix_caching = enable_prefix_caching
         self.heartbeat_interval = heartbeat_interval
+        self.reasoning_effort = reasoning_effort
 
         self.hostname = socket.gethostname()
         self.ip_address = self._get_ip()
@@ -248,11 +250,22 @@ class WorkerDaemon:
                 cmd.extend(["--context-length", str(self.max_model_len)])
             if self.served_model_name:
                 cmd.extend(["--served-model-name", self.served_model_name])
+        elif self.engine == "oss":
+            cmd = [
+                sys.executable, "-m", "elastic_serving.oss.server",
+                "--model", self.model,
+                "--port", str(inst.port),
+                "--host", "0.0.0.0",
+                "--tensor-parallel-size", str(self.tensor_parallel_size),
+                "--gpu-memory-utilization", str(self.gpu_memory_utilization),
+            ]
+            if self.reasoning_effort:
+                cmd.extend(["--reasoning-effort", self.reasoning_effort])
         else:
             raise ValueError(f"Unknown engine: {self.engine}")
 
         # Append extra args
-        if self.engine_extra_args:
+        if self.engine_extra_args and self.engine in {"vllm", "sglang"}:
             import shlex
             cmd.extend(shlex.split(self.engine_extra_args))
 
@@ -451,7 +464,7 @@ def main():
     parser = argparse.ArgumentParser(description="Elastic Serving Worker (DP + TP)")
     parser.add_argument("--scheduler-url", required=True,
                         help="URL of the elastic scheduler")
-    parser.add_argument("--engine", choices=["vllm", "sglang"], default="vllm")
+    parser.add_argument("--engine", choices=["vllm", "sglang", "oss"], default="vllm")
     parser.add_argument("--model", required=True, help="Model name/path")
     parser.add_argument("--base-port", type=int, default=8001,
                         help="Base port for vLLM/SGLang servers (DP instances use base+0, base+1, ...)")
@@ -466,6 +479,7 @@ def main():
     parser.add_argument("--no-prefix-caching", action="store_true",
                         help="Disable prefix caching (needed for some architectures like Mamba hybrids)")
     parser.add_argument("--heartbeat-interval", type=float, default=30.0)
+    parser.add_argument("--reasoning-effort", type=str, default=None)
     args = parser.parse_args()
 
     daemon = WorkerDaemon(
@@ -481,6 +495,7 @@ def main():
         engine_extra_args=args.engine_extra_args,
         enable_prefix_caching=not args.no_prefix_caching,
         heartbeat_interval=args.heartbeat_interval,
+        reasoning_effort=args.reasoning_effort,
     )
     daemon.run()
 
