@@ -4,6 +4,20 @@
 *.pyc
 .env
 __pycache__/
-data/
-logs/
-results/
+/data/
+/logs/
+/results/
+
+# SFT artifacts (data, checkpoints, logs, concrete configs)
+sft/data/*.jsonl
+sft/data/*multiturn*.json
+sft/data/*source*.jsonl
+sft/trajectories/
+sft/ckpts/
+sft/logs/
+sft/qwen35-9b-dr-sft.yaml
+sft/qwen35-27b-dr-sft.yaml
+sft/train.sh
+
+# Env lock files
+envs/oss_env/uv.lock

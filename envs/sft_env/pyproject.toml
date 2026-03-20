@@ -1,0 +1,36 @@
+[project]
+name = "elastic-serving-sft-env"
+version = "0.1.0"
+description = "Environment for SFT training with LLaMA-Factory on Qwen3.5"
+requires-python = ">=3.11,<3.13"
+
+# Conda env name: llamafactory (Python 3.11)
+# Installed versions as of 2026-03-18:
+#
+#   torch            2.6.0+cu126
+#   transformers     5.2.0
+#   datasets         4.0.0
+#   accelerate       1.11.0
+#   peft             0.18.1
+#   trl              0.24.0
+#   deepspeed        0.18.8
+#   wandb            0.25.1
+#   llamafactory     0.9.5.dev0 (editable, from sft/LLaMA-Factory)
+#   flash-attn       (build from source on GPU node)
+#
+# Setup:
+#   conda create -n llamafactory python=3.11 -y
+#   conda activate llamafactory
+#   pip install torch==2.6.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+#   cd sft/LLaMA-Factory && pip install -e . && cd ../..
+#   pip install deepspeed wandb
+#   # On a GPU node (needs nvcc for compilation):
+#   pip install flash-attn --no-build-isolation --no-cache-dir
+
+dependencies = [
+    "torch==2.6.0",
+    "torchvision==0.21.0",
+    "torchaudio==2.6.0",
+    "deepspeed>=0.18.0",
+    "wandb>=0.25.0",
+]
