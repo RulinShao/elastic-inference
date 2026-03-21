@@ -244,22 +244,18 @@ def parse_qwen3_tool_call(
 def make_function_call_content(
     tool_name: str, arguments: Dict[str, Any], thinking: str = ""
 ) -> str:
-    """Build ``function_call`` turn content in Qwen3.5 native XML format.
+    """Build ``function_call`` turn content as JSON in ``<tool_call>`` tags.
 
-    Matches the format expected by ``Qwen35ToolUtils`` in LLaMA-Factory
-    and the Qwen3.5 tokenizer's ``apply_chat_template``.
+    LLaMA-Factory's ``FunctionFormatter`` parses this JSON and re-formats it
+    into the model-specific format (XML for Qwen3.5) during tokenization.
     """
-    prompt = f"<tool_call>\n<function={tool_name}>"
-    for key, value in arguments.items():
-        prompt += f"\n<parameter={key}>"
-        if not isinstance(value, str):
-            value = json.dumps(value, ensure_ascii=False)
-        prompt += f"\n{value}\n</parameter>"
-    prompt += "\n</function>\n</tool_call>"
+    call_json = [{"name": tool_name, "arguments": arguments}]
+    json_str = json.dumps(call_json, ensure_ascii=False)
+    tool_call_block = f"<tool_call>\n{json_str}\n</tool_call>"
 
     if thinking:
-        return f"<think>\n{thinking}\n</think>\n\n{prompt}"
-    return prompt
+        return f"<think>\n{thinking}\n</think>\n\n{tool_call_block}"
+    return tool_call_block
 
 
 def reformat_trajectory(example: Dict[str, Any]) -> Optional[Dict[str, Any]]:

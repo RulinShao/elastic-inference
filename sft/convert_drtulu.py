@@ -366,29 +366,19 @@ def format_tool_response(tool_name: str, env_content: str) -> str:
 def make_function_call_content(
     tool_name: str, arguments: Dict[str, Any], thinking: str = ""
 ) -> str:
-    """Build function_call turn content in Qwen3.5 XML format for LLaMA-Factory.
+    """Build function_call turn content as JSON wrapped in ``<tool_call>`` tags.
 
-    Produces the native Qwen3.5 tool call format::
-
-        <tool_call>
-        <function=web_search>
-        <parameter=query>
-        climate change
-        </parameter>
-        </function>
-        </tool_call>
+    LLaMA-Factory's ``FunctionFormatter`` parses this JSON and re-formats it
+    into the model-specific format (XML for Qwen3.5, JSON for Qwen3) during
+    tokenization. The ``<think>`` block is preserved as-is.
     """
-    prompt = f"<tool_call>\n<function={tool_name}>"
-    for key, value in arguments.items():
-        prompt += f"\n<parameter={key}>"
-        if not isinstance(value, str):
-            value = json.dumps(value, ensure_ascii=False)
-        prompt += f"\n{value}\n</parameter>"
-    prompt += "\n</function>\n</tool_call>"
+    call_json = [{"name": tool_name, "arguments": arguments}]
+    json_str = json.dumps(call_json, ensure_ascii=False)
+    tool_call_block = f"<tool_call>\n{json_str}\n</tool_call>"
 
     if thinking:
-        return f"<think>\n{thinking}\n</think>\n\n{prompt}"
-    return prompt
+        return f"<think>\n{thinking}\n</think>\n\n{tool_call_block}"
+    return tool_call_block
 
 
 def convert_example(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
