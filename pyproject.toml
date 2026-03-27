@@ -8,11 +8,9 @@ version = "0.1.0"
 description = "Auto-scaling vLLM/SGLang inference on SLURM low-priority resources"
 requires-python = ">=3.9"
 dependencies = [
-    "e2b-code-interpreter>=1.6.0",
     "fastapi>=0.100.0",
     "uvicorn>=0.23.0",
     "httpx>=0.25.0",
-    "json-repair>=0.39.0",
     "requests>=2.28.0",
     "pydantic>=2.0.0",
 ]
@@ -20,6 +18,10 @@ dependencies = [
 [project.optional-dependencies]
 client = [
     "openai>=1.0.0",
+]
+miro = [
+    "e2b-code-interpreter>=1.6.0",
+    "json-repair>=0.39.0",
 ]
 vllm = [
     "vllm>=0.4.0",

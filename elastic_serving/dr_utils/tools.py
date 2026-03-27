@@ -46,10 +46,12 @@ class BrowserSession:
         http_client: httpx.AsyncClient,
         blocked_domains: Optional[List[str]] = None,
         disable_scroll: bool = False,
+        plain_format: bool = False,
     ):
         self.http_client = http_client
         self.blocked_domains = blocked_domains or []
         self.disable_scroll = disable_scroll
+        self.plain_format = plain_format
         self._cursor_counter = 0
         self._pages: Dict[int, Dict[str, Any]] = {}
         self._search_results: Dict[int, List[Dict[str, Any]]] = {}
@@ -105,9 +107,14 @@ class BrowserSession:
             result_list.append(
                 {"id": i, "url": url, "title": title, "snippet": snippet}
             )
-            lines.append(f"【{i}†{title}】")
-            lines.append(f"URL: {url}")
-            lines.append(snippet)
+            if self.plain_format:
+                lines.append(f"[{i}] {title}")
+                lines.append(f"    URL: {url}")
+                lines.append(f"    Snippet: {snippet}")
+            else:
+                lines.append(f"【{i}†{title}】")
+                lines.append(f"URL: {url}")
+                lines.append(snippet)
             lines.append("")
 
         self._search_results[cursor] = result_list
@@ -116,6 +123,9 @@ class BrowserSession:
             "title": f"Search: {query}",
             "lines": lines,
         }
+
+        if self.plain_format:
+            return "\n".join(lines)
 
         numbered = "\n".join(
             f"L{i + 1}: {line}" for i, line in enumerate(lines)
@@ -170,6 +180,8 @@ class BrowserSession:
             start = (loc - 1) if loc and loc > 0 else 0
             n = num_lines if num_lines and num_lines > 0 else 50
             view = page["lines"][start : start + n]
+            if self.plain_format:
+                return "\n".join(view)
             numbered = "\n".join(
                 f"L{start + i + 1}: {line}" for i, line in enumerate(view)
             )
@@ -223,6 +235,9 @@ class BrowserSession:
             start = (loc - 1) if loc and loc > 0 else 0
             n = num_lines if num_lines and num_lines > 0 else len(all_lines)
         view = all_lines[start : start + n]
+        if self.plain_format:
+            header = f"Page: {target_url}\n" if target_url else ""
+            return header + "\n".join(view)
         numbered = "\n".join(
             f"L{start + i + 1}: {line}" for i, line in enumerate(view)
         )
@@ -245,9 +260,15 @@ class BrowserSession:
         if not matches:
             return f'No matches for "{pattern}" in [{target}].'
 
-        out = [f'Found {len(matches)} match(es) for "{pattern}" in [{target}]:']
+        if self.plain_format:
+            out = [f'Found {len(matches)} match(es) for "{pattern}":']
+        else:
+            out = [f'Found {len(matches)} match(es) for "{pattern}" in [{target}]:']
         for line_num, line in matches[:20]:
-            out.append(f"L{line_num}: {line}")
+            if self.plain_format:
+                out.append(line)
+            else:
+                out.append(f"L{line_num}: {line}")
         if len(matches) > 20:
             out.append(f"... and {len(matches) - 20} more matches")
         return "\n".join(out)

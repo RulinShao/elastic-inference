@@ -29,7 +29,6 @@ dotenv.load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from elastic_serving.adapters import get_adapter, ToolAdapter
-from elastic_serving.miro_runtime import generate_miro_trajectory
 from elastic_serving.tools import (
     STOP_TOKENS,
     STOP_TOKENS_NO_CALL,
@@ -64,7 +63,9 @@ You are an impartial judge evaluating whether a model's answer is correct.
 
 Evaluate whether the model's answer is correct. The model's answer does NOT \
 need to match the reference answer word-for-word — it just needs to convey \
-the same factual information. Be lenient about formatting differences.
+the same factual information. Be lenient about formatting differences. \
+Ignore any XML/HTML markup such as <cite>, <answer>, \\boxed{{}}, or other \
+tags — focus only on the factual content of the answer.
 
 Respond with a JSON object:
 {{"correct": true/false, "explanation": "brief reason"}}"""
@@ -76,7 +77,7 @@ async def generate_trajectory(
     traj_idx=0, max_tool_calls=MAX_TOOL_CALLS,
     max_gen_tokens=MAX_GEN_TOKENS, temperature=TEMPERATURE,
     save_conversation=False, api_sem=None, blocked_domains=None,
-    enable_python=False, disable_scroll=False,
+    enable_python=False, disable_scroll=False, plain_format=False,
 ):
     # Use adapter if provided, otherwise fall back to legacy Harmony functions
     if adapter is None:
@@ -85,7 +86,7 @@ async def generate_trajectory(
 
     http_client = httpx.AsyncClient(timeout=60)
     openai_http = httpx.AsyncClient(timeout=600)
-    browser = BrowserSession(http_client, blocked_domains=blocked_domains, disable_scroll=disable_scroll)
+    browser = BrowserSession(http_client, blocked_domains=blocked_domains, disable_scroll=disable_scroll, plain_format=plain_format)
     python_session = PythonSession(timeout=120, allowed_dirs=["/tmp/python_sandbox"]) if enable_python else None
     tool_call_count = 0
     tool_calls_log = []
@@ -398,6 +399,7 @@ async def run_eval(args):
                 return completed[(qid, traj_idx)]
             try:
                 if args.agent_style == "miro":
+                    from elastic_serving.miro_runtime import generate_miro_trajectory
                     result = await generate_miro_trajectory(
                         question=row[q_col],
                         qid=qid,
@@ -428,6 +430,7 @@ async def run_eval(args):
                         api_sem=api_sem, blocked_domains=args.blocked_domains,
                         enable_python=args.enable_python,
                         disable_scroll=args.no_scroll,
+                        plain_format=args.plain_format,
                     )
                 result["reference_answer"] = get_reference_answer(row)
             except Exception:
@@ -604,6 +607,8 @@ def build_arg_parser():
                     help="Reasoning effort level for gpt-oss (e.g. 'high'). Only used with Harmony adapter.")
     p.add_argument("--no-scroll", action="store_true",
                     help="Disable browser scrolling (loc parameter ignored, scroll-within-page disabled)")
+    p.add_argument("--plain-format", action="store_true",
+                    help="Use plain tool output format (no cursors, line numbers, or 【】 markers)")
     p.add_argument("--miro-keep-tool-result", type=int, default=-1,
                     help="Keep only the last K tool-result messages in Miro mode (-1 keeps all)")
     p.set_defaults(miro_final_summary=True)
