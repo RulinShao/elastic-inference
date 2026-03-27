@@ -29,6 +29,7 @@ dotenv.load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from elastic_serving.adapters import get_adapter, ToolAdapter
+from elastic_serving.miro_runtime import generate_miro_trajectory
 from elastic_serving.tools import (
     STOP_TOKENS,
     STOP_TOKENS_NO_CALL,
@@ -46,6 +47,10 @@ MAX_TOOL_CALLS = 50
 MAX_GEN_TOKENS = 8192
 MAX_MODEL_LEN = 131072
 TEMPERATURE = 0.7
+MIRO_MAX_GEN_TOKENS = 16384
+MIRO_TEMPERATURE = 1.0
+MIRO_TOP_P = 0.95
+MIRO_REPETITION_PENALTY = 1.05
 JUDGE_MODEL = "gpt-4o"
 
 JUDGE_PROMPT = """\
@@ -277,32 +282,60 @@ async def run_eval(args):
     if args.num_samples > 0:
         ds = ds.select(range(min(args.num_samples, len(ds))))
 
-    # Add IDs if missing
-    # Normalize column names: support 'query' as alias for 'question'
+    # Normalize column names: support 'query' as alias for 'question'.
     q_col = "question" if "question" in ds.column_names else "query"
-    a_col = "answer"
-
+    if q_col not in ds.column_names:
+        raise ValueError(f"Dataset must contain either 'question' or 'query': {ds.column_names}")
+    a_col = "answer" if "answer" in ds.column_names else None
     has_id = "id" in ds.column_names
     def get_id(row, idx):
         if has_id:
             return str(row["id"])
         return hashlib.md5(row[q_col].encode()).hexdigest()[:8]
 
+    def get_reference_answer(row):
+        if not a_col:
+            return ""
+        value = row.get(a_col)
+        return "" if value is None else str(value)
+
+    refs_available = bool(a_col) and any(bool(get_reference_answer(row).strip()) for row in ds)
+    effective_skip_judge = args.skip_judge or not refs_available
+    if not refs_available:
+        print("No reference answers found in dataset; running inference-only and skipping judge.")
+
     # Auto-detect model
     if not args.model:
         resp = httpx.get(f"{args.scheduler_url.rstrip('/')}/cluster_status", timeout=5)
         args.model = resp.json().get("model", "")
     print(f"Model: {args.model}")
-    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    tokenizer = None
+    adapter = None
+    if args.agent_style == "native":
+        tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
 
-    # Create model-specific adapter
-    enable_thinking = not getattr(args, 'no_think', False)
-    adapter = get_adapter(args.model_format, tokenizer, enable_thinking=enable_thinking,
-                          reasoning_effort=args.reasoning_effort)
-    think_str = " (no-think)" if not enable_thinking else ""
-    effort_str = f" reasoning_effort={args.reasoning_effort}" if args.reasoning_effort else ""
-    scroll_str = " no-scroll" if args.no_scroll else ""
-    print(f"Format: {type(adapter).__name__}{think_str}{effort_str}{scroll_str}")
+        # Create model-specific adapter
+        enable_thinking = not getattr(args, 'no_think', False)
+        adapter = get_adapter(args.model_format, tokenizer, enable_thinking=enable_thinking,
+                              reasoning_effort=args.reasoning_effort)
+        think_str = " (no-think)" if not enable_thinking else ""
+        effort_str = f" reasoning_effort={args.reasoning_effort}" if args.reasoning_effort else ""
+        scroll_str = " no-scroll" if args.no_scroll else ""
+        print(f"Agent style: native")
+        print(f"Format: {type(adapter).__name__}{think_str}{effort_str}{scroll_str}")
+    else:
+        print(f"Agent style: miro")
+        print(
+            f"Miro settings: max_turns={args.max_tool_calls} "
+            f"max_gen_tokens={args.max_gen_tokens} "
+            f"keep_tool_result={args.miro_keep_tool_result} "
+            f"temperature={args.temperature} "
+            f"top_p={MIRO_TOP_P} "
+            f"repetition_penalty={MIRO_REPETITION_PENALTY} "
+            f"final_summary={args.miro_final_summary} "
+            f"web_summary_llm={args.miro_use_web_summary_llm} "
+            f"python_backend={'e2b' if args.enable_python else 'disabled'}"
+        )
 
     # Parse URLs (comma-separated for multi-node)
     raw_urls = [u.strip().rstrip("/") for u in args.scheduler_url.split(",")]
@@ -364,20 +397,42 @@ async def run_eval(args):
             if (qid, traj_idx) in completed:
                 return completed[(qid, traj_idx)]
             try:
-                result = await generate_trajectory(
-                    question=row[q_col], qid=qid, base_urls=base_urls,
-                    model=args.model, tokenizer=tokenizer, adapter=adapter,
-                    traj_idx=traj_idx,
-                    max_tool_calls=args.max_tool_calls, temperature=args.temperature,
-                    save_conversation=args.save_full_trajectories,
-                    api_sem=api_sem, blocked_domains=args.blocked_domains,
-                    enable_python=args.enable_python,
-                    disable_scroll=args.no_scroll,
-                )
-                result["reference_answer"] = row.get(a_col, "")
+                if args.agent_style == "miro":
+                    result = await generate_miro_trajectory(
+                        question=row[q_col],
+                        qid=qid,
+                        base_urls=base_urls,
+                        model=args.model,
+                        traj_idx=traj_idx,
+                        max_turns=args.max_tool_calls,
+                        max_gen_tokens=args.max_gen_tokens,
+                        temperature=args.temperature,
+                        top_p=MIRO_TOP_P,
+                        repetition_penalty=MIRO_REPETITION_PENALTY,
+                        save_conversation=args.save_full_trajectories,
+                        blocked_domains=args.blocked_domains,
+                        enable_python=args.enable_python,
+                        keep_tool_result=args.miro_keep_tool_result,
+                        use_summary=args.miro_final_summary,
+                        use_web_summary_llm=args.miro_use_web_summary_llm,
+                        max_context_length=MAX_MODEL_LEN,
+                    )
+                else:
+                    result = await generate_trajectory(
+                        question=row[q_col], qid=qid, base_urls=base_urls,
+                        model=args.model, tokenizer=tokenizer, adapter=adapter,
+                        traj_idx=traj_idx,
+                        max_tool_calls=args.max_tool_calls, max_gen_tokens=args.max_gen_tokens,
+                        temperature=args.temperature,
+                        save_conversation=args.save_full_trajectories,
+                        api_sem=api_sem, blocked_domains=args.blocked_domains,
+                        enable_python=args.enable_python,
+                        disable_scroll=args.no_scroll,
+                    )
+                result["reference_answer"] = get_reference_answer(row)
             except Exception:
                 result = {"qid": qid, "traj_idx": traj_idx, "question": row[q_col],
-                          "answer": "", "reference_answer": row.get(a_col, ""),
+                          "answer": "", "reference_answer": get_reference_answer(row),
                           "error": traceback.format_exc(), "status": "error", "latency_s": 0}
             total_done += 1
             return result
@@ -417,15 +472,21 @@ async def run_eval(args):
                   f"{agg['no_output']} no_output ({agg['no_output']/agg['total']*100:.0f}%)")
 
     # Judge (skip for long-form generation without reference answers)
-    if args.skip_judge:
-        print(f"\nSkipping judge (--skip-judge). Saving trajectories only.")
+    if effective_skip_judge:
+        reason = "--skip-judge" if args.skip_judge else "no reference answers"
+        print(f"\nSkipping judge ({reason}). Saving trajectories only.")
         # Save summary without judge results
         summary = {
             "dataset": args.dataset, "split": args.split, "model": args.model,
             "num_questions": len(ds), "num_trajectories_per_q": args.num_trajectories,
             "total_trajectories": n_trajs, "max_tool_calls": args.max_tool_calls,
-            "temperature": args.temperature,
+            "temperature": args.temperature, "max_gen_tokens": args.max_gen_tokens,
+            "agent_style": args.agent_style,
         }
+        if args.agent_style == "miro":
+            summary["max_turns"] = args.max_tool_calls
+            summary["top_p"] = MIRO_TOP_P
+            summary["repetition_penalty"] = MIRO_REPETITION_PENALTY
         avg_tools = sum(r.get("num_tool_calls", 0) for r in all_results) / max(len(all_results), 1)
         summary["avg_tool_calls"] = round(avg_tools, 1)
         summary["total_results"] = len(all_results)
@@ -482,14 +543,19 @@ async def run_eval(args):
         "dataset": args.dataset, "split": args.split, "model": args.model,
         "num_questions": n_q, "num_trajectories_per_q": k,
         "total_trajectories": total_trajs, "max_tool_calls": args.max_tool_calls,
-        "temperature": args.temperature, "judge_model": args.judge_model,
-        "blocked_domains": args.blocked_domains,
+        "temperature": args.temperature, "max_gen_tokens": args.max_gen_tokens,
+        "judge_model": args.judge_model,
+        "blocked_domains": args.blocked_domains, "agent_style": args.agent_style,
         f"pass@{k}": pass_at_k, f"avg@{k}": avg_at_k,
         "trajectory_accuracy": correct_trajs / max(total_trajs, 1),
         "correct_trajectories": correct_trajs,
         "avg_tool_calls": round(avg_tools, 1),
         "per_question": per_question,
     }
+    if args.agent_style == "miro":
+        summary["max_turns"] = args.max_tool_calls
+        summary["top_p"] = MIRO_TOP_P
+        summary["repetition_penalty"] = MIRO_REPETITION_PENALTY
     with open(results_file, "w") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
 
@@ -502,7 +568,7 @@ async def run_eval(args):
     await judge_http.aclose()
 
 
-def main():
+def build_arg_parser():
     p = argparse.ArgumentParser(description="Generic deep research evaluation")
     p.add_argument("--scheduler-url", default=os.environ.get("ELASTIC_SERVING_URL", "http://localhost:8780"))
     p.add_argument("--model", default=None)
@@ -511,8 +577,12 @@ def main():
     p.add_argument("--num-samples", type=int, default=-1)
     p.add_argument("--num-trajectories", type=int, default=4)
     p.add_argument("--concurrency", type=int, default=32)
-    p.add_argument("--max-tool-calls", type=int, default=50)
-    p.add_argument("--temperature", type=float, default=0.7)
+    p.add_argument("--max-tool-calls", type=int, default=50,
+                    help="Maximum step budget. Native mode uses this as max tool calls; Miro mode uses this as max turns.")
+    p.add_argument("--max-gen-tokens", type=int, default=None,
+                    help="Maximum generation tokens per model call. Defaults: native=8192, miro=16384.")
+    p.add_argument("--temperature", type=float, default=None,
+                    help="Sampling temperature. Defaults: native=0.7, miro=1.0.")
     p.add_argument("--output-dir", required=True)
     p.add_argument("--resume", action="store_true")
     p.add_argument("--judge-model", default=JUDGE_MODEL)
@@ -521,7 +591,9 @@ def main():
     p.add_argument("--no-save-full-trajectories", action="store_false", dest="save_full_trajectories")
     p.add_argument("--blocked-domains", nargs="*", default=None)
     p.add_argument("--enable-python", action="store_true",
-                    help="Enable python code execution tool (requires jupyter_client + ipykernel)")
+                    help="Enable python code execution tool. Native mode uses local Jupyter; Miro mode uses E2B tool-python.")
+    p.add_argument("--agent-style", choices=["native", "miro"], default="native",
+                    help="Agent loop style: existing adapter/raw-prompt mode or Miro message-based mode")
     p.add_argument("--model-format", choices=["harmony", "qwen3", "auto"], default="auto",
                     help="Model chat template format (default: auto-detect from tokenizer)")
     p.add_argument("--no-think", action="store_true",
@@ -532,7 +604,28 @@ def main():
                     help="Reasoning effort level for gpt-oss (e.g. 'high'). Only used with Harmony adapter.")
     p.add_argument("--no-scroll", action="store_true",
                     help="Disable browser scrolling (loc parameter ignored, scroll-within-page disabled)")
-    args = p.parse_args()
+    p.add_argument("--miro-keep-tool-result", type=int, default=-1,
+                    help="Keep only the last K tool-result messages in Miro mode (-1 keeps all)")
+    p.set_defaults(miro_final_summary=True)
+    p.add_argument("--miro-no-final-summary", dest="miro_final_summary", action="store_false",
+                    help="Disable the extra Miro-style final summary round after the main loop")
+    p.set_defaults(miro_use_web_summary_llm=True)
+    p.add_argument("--miro-no-web-summary-llm", dest="miro_use_web_summary_llm", action="store_false",
+                    help="Disable SUMMARY_LLM extraction inside scrape_and_extract_info and return raw scraped content instead.")
+    return p
+
+
+def main():
+    args = build_arg_parser().parse_args()
+
+    if args.max_gen_tokens is None:
+        args.max_gen_tokens = (
+            MIRO_MAX_GEN_TOKENS if args.agent_style == "miro" else MAX_GEN_TOKENS
+        )
+    if args.temperature is None:
+        args.temperature = (
+            MIRO_TEMPERATURE if args.agent_style == "miro" else TEMPERATURE
+        )
 
     if not args.model:
         try:
@@ -546,4 +639,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

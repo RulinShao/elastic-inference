@@ -96,6 +96,67 @@ python scripts/eval_webshaper.py \
     --max-tool-calls 50 --concurrency 8
 ```
 
+### Evaluation (Miro Mode)
+
+`eval_generic.py` can also run a Miro-style message-based loop over
+`/v1/chat/completions`, with `keep_tool_result` trimming and Miro-compatible
+tool names.
+
+```bash
+python scripts/eval_generic.py \
+    --scheduler-url http://localhost:8780 \
+    --dataset rl-rag/bc_synthetic_v_2 --split normal \
+    --output-dir results/miro_generic \
+    --agent-style miro \
+    --max-tool-calls 50 \
+    --enable-python
+```
+
+Useful Miro-specific arguments:
+
+- `--agent-style miro` switches `eval_generic.py` from the native raw-prompt loop to the Miro message-based loop.
+- `--max-tool-calls` is reused as the Miro turn budget.
+- `--max-gen-tokens` controls the per-call generation cap; in Miro mode it defaults to `16384`.
+- `--temperature` controls sampling; in Miro mode it defaults to `1.0`.
+- `--miro-keep-tool-result` controls message-history trimming for tool outputs. The Miro runtime keeps the full assistant/user turn structure, but can replace older tool-result payloads with a short placeholder to save context length. `-1` keeps all prior tool-result content, `0` drops all prior tool-result payloads, and positive values keep only the last `K` tool-result messages verbatim.
+- `--miro-no-final-summary` disables the extra final summary round that asks the model to synthesize the final boxed answer from the full trajectory.
+- `--miro-no-web-summary-llm` disables the webpage-summary LLM inside `scrape_and_extract_info`. By default, that tool first scrapes the page/PDF and then calls `SUMMARY_LLM_*` with the current question or target instruction to extract the most relevant information. Disabling it returns the raw scraped content to the main model instead.
+- `--enable-python` exposes the Miro `tool-python` tools backed by E2B; by default Python tools are disabled.
+- `--skip-judge` saves trajectories only and skips answer judging; datasets without an `answer` column also skip judging automatically.
+
+Defaults in Miro mode:
+
+- `--max-tool-calls` is reused as the Miro turn budget
+- `--miro-keep-tool-result -1` keeps all prior tool-result context; smaller values trade accuracy for lower prompt growth on long trajectories
+- Miro sampling matches the native defaults: `max_gen_tokens=16384`, `temperature=1.0`, `top_p=0.95`, `repetition_penalty=1.05`
+- final summary is enabled by default; pass `--miro-no-final-summary` to skip the extra summary round
+- web summary LLM is enabled by default; pass `--miro-no-web-summary-llm` to return raw scraped content instead of question-aware extracted notes
+
+Environment variables used by Miro mode:
+
+- Required for search:
+  `SERPER_API_KEY`
+- Optional search endpoint override:
+  `SERPER_BASE_URL`
+- Required for scraping:
+  `JINA_API_KEY`
+- Optional scraping endpoint override:
+  `JINA_BASE_URL`
+- Required for webpage-summary LLM unless `--miro-no-web-summary-llm` is used:
+  `SUMMARY_LLM_BASE_URL`, `SUMMARY_LLM_MODEL_NAME`, `SUMMARY_LLM_API_KEY`
+- Required for `tool-python` when `--enable-python` is used:
+  `E2B_API_KEY`
+- Required only when answer judging is enabled:
+  `OPENAI_API_KEY`
+
+Current runtime defaults used by the Miro backend:
+
+- `max_context_length = 131072`
+- `DEFAULT_MAX_FINAL_ANSWER_RETRIES = 3`
+- `DEFAULT_E2B_TIMEOUT = 600`
+- `DEFAULT_E2B_TEMPLATE_ID = 1av7fdjfvcparqo8efq6`
+- Older tool results are replaced with the literal placeholder `Tool result is omitted to save tokens.` when `--miro-keep-tool-result` trims history
+
 ### Trajectory Generation
 
 ```bash
