@@ -1,5 +1,5 @@
 import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from openai_harmony import (
     Conversation,
@@ -30,11 +30,16 @@ sources=web
 
 
 class BrowserPool:
-    def __init__(self):
+    def __init__(self, blocked_substrings: Sequence[str] | None = None):
         self.sessions: Dict[Any, BrowserTool] = {}
+        self.blocked_substrings = list(blocked_substrings or [])
 
     def init_session(self, qid: Any) -> dict:
-        tool = BrowserTool(backend=SerperServiceBrowserBackend())
+        tool = BrowserTool(
+            backend=SerperServiceBrowserBackend(
+                blocked_substrings=self.blocked_substrings,
+            )
+        )
         self.sessions[qid] = tool
         return tool.tool_config
 
@@ -106,6 +111,7 @@ class OSSEngineRuntime:
         tensor_parallel_size: int = 1,
         gpu_memory_utilization: float = 0.95,
         default_reasoning_effort: str = "high",
+        blocked_substrings: Sequence[str] | None = None,
     ):
         self.generator = vLLMAsyncGenerator(
             model_name_or_path,
@@ -113,7 +119,7 @@ class OSSEngineRuntime:
             gpu_memory_utilization=gpu_memory_utilization,
         )
         self.encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
-        self.browser_pool = BrowserPool()
+        self.browser_pool = BrowserPool(blocked_substrings=blocked_substrings)
         self.default_reasoning_effort = default_reasoning_effort
 
     async def run_one(

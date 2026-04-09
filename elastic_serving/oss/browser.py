@@ -1,6 +1,6 @@
 import logging
 from aiohttp import ClientSession
-from typing import AsyncIterator, List, Union
+from typing import AsyncIterator, Iterable, List, Sequence, Union
 import time,json,html
 import asyncio
 from gpt_oss.tools.simple_browser.page_contents import (
@@ -26,6 +26,24 @@ import os
 
 
 logger = logging.getLogger(__name__)
+
+def filter_blocked_search_results(
+    results: Iterable[tuple[str, str, str]],
+    blocked_substrings: Sequence[str],
+) -> list[tuple[str, str, str]]:
+    """Filter search results whose title/url/snippet match blocked substrings."""
+    normalized_blocks = [s.strip().lower() for s in blocked_substrings if s and s.strip()]
+    if not normalized_blocks:
+        return list(results)
+
+    filtered = []
+    for title, url, summary in results:
+        haystack = " ".join(v for v in (title, url, summary) if v).lower()
+        if any(blocked in haystack for blocked in normalized_blocks):
+            continue
+        filtered.append((title, url, summary))
+    return filtered
+
 
 def sanitize_dict_keys(d):
     """Remove None keys from dictionary."""
@@ -96,8 +114,9 @@ class BrowserTool(SimpleBrowserTool):
 class LocalServiceBrowserBackend:
     source = "web"
     
-    def __init__(self,base_url):
+    def __init__(self, base_url, blocked_substrings: Sequence[str] | None = None):
         self.base_url = base_url
+        self.blocked_substrings = list(blocked_substrings or [])
         
     async def _post(self, session: ClientSession, endpoint: str, payload: dict) -> dict:
         t0 = time.time()
@@ -132,6 +151,10 @@ class LocalServiceBrowserBackend:
                 html.escape(result['url'], quote=True),
                 html.escape(result['summary'], quote=True)
             ))
+        title_url_summary = filter_blocked_search_results(
+            title_url_summary,
+            self.blocked_substrings,
+        )
         return query, title_url_summary
 
     async def search(
@@ -208,10 +231,19 @@ class SerperServiceBrowserBackend:
     """Browser backend using Serper API for search and scraping."""
     source = "web"
 
-    def __init__(self):
+    def __init__(self, blocked_substrings: Sequence[str] | None = None):
         self.api_key = os.getenv("SERPER_API_KEY")
         self.search_url = "https://google.serper.dev/search"
         self.scrape_url = "https://scrape.serper.dev/"
+        self.blocked_substrings = list(blocked_substrings or [])
+
+    def _build_headers(self) -> dict[str, str]:
+        if not self.api_key:
+            raise BackendError("SERPER_API_KEY not set.")
+        return {
+            "X-API-KEY": self.api_key,
+            "Content-Type": "application/json",
+        }
 
     async def _search_single(
         self,
@@ -224,10 +256,7 @@ class SerperServiceBrowserBackend:
             "q": query,
             "num": topn
         }
-        headers = {
-            "X-API-KEY": self.api_key,
-            "Content-Type": "application/json"
-        }
+        headers = self._build_headers()
 
         async with session.post(self.search_url, json=payload, headers=headers) as resp:
             if resp.status != 200:
@@ -248,6 +277,10 @@ class SerperServiceBrowserBackend:
                 html.escape(result.get('link', ''), quote=True),
                 html.escape(result.get('snippet', ''), quote=True)
             ))
+        title_url_summary = filter_blocked_search_results(
+            title_url_summary,
+            self.blocked_substrings,
+        )
         return query, title_url_summary
 
     async def search(
@@ -308,10 +341,7 @@ class SerperServiceBrowserBackend:
         payload = {
             "url": url
         }
-        headers = {
-            "X-API-KEY": self.api_key,
-            "Content-Type": "application/json"
-        }
+        headers = self._build_headers()
 
         async with session.post(self.scrape_url, json=payload, headers=headers) as resp:
             if resp.status != 200:
@@ -341,5 +371,3 @@ class SerperServiceBrowserBackend:
             display_urls=True,
             session=session,
         )
-
-
