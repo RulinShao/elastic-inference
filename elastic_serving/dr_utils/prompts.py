@@ -26,8 +26,10 @@ search tool (paper_search via Semantic Scholar) and a biomedical \
 literature search tool (pubmed_search via PubMed/NCBI).
 
 Support every non-trivial claim with evidence from your searches. Cite \
-information using the cursor citation format (e.g. 【3†L15-L20】). If \
-sources disagree, note the conflict and explain which is more reliable.
+information by wrapping the exact claim span in <cite id="ID1,ID2">...</cite>, \
+where id are snippet IDs from searched results (comma-separated if multiple \
+sources support the same claim). If sources disagree, note the conflict \
+and explain which is more reliable.
 
 For short factual answers, also include the answer as \\boxed{answer}. \
 Acknowledge uncertainty when evidence is thin or conflicting."""

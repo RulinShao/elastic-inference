@@ -96,6 +96,21 @@ python scripts/eval_webshaper.py \
     --max-tool-calls 50 --concurrency 8
 ```
 
+### Evaluation (Miro Mode)
+
+`eval_generic.py` also supports a Miro-style message-based agent loop via `--agent-style miro`. This uses `/v1/chat/completions` with XML `<use_mcp_tool>` tool calls instead of the native raw-prompt adapter loop.
+
+```bash
+python scripts/eval_generic.py \
+    --scheduler-url http://localhost:8780 \
+    --dataset rl-rag/bc_synthetic_v_2 --split normal \
+    --output-dir results/miro_generic \
+    --agent-style miro \
+    --max-tool-calls 50
+```
+
+Key Miro-specific flags: `--miro-keep-tool-result K` (trim older tool results), `--miro-no-final-summary`, `--miro-no-web-summary-llm`, `--enable-python` (E2B backend, requires `pip install elastic-serving[miro]`). See `python scripts/eval_generic.py --help` for details.
+
 ### Trajectory Generation
 
 ```bash

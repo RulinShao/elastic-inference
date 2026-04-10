@@ -36,105 +36,20 @@ import ast
 import json
 import os
 import re
+import sys
 from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 
-# ── Qwen3.5 system prompt (matching elastic-serving) ─────────────────────────
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-QWEN35_SYSTEM_PROMPT = """\
-You are a research assistant that answers questions by searching the web \
-and reading sources. You have access to browser tools and an academic paper \
-search tool (paper_search via Semantic Scholar) and a biomedical \
-literature search tool (pubmed_search via PubMed/NCBI).
+# Import system prompt and tool definitions from elastic-serving
+# so training data is exactly aligned with inference.
+from elastic_serving.dr_utils.prompts import SYSTEM_PROMPT as QWEN35_SYSTEM_PROMPT
+from elastic_serving.adapters import _QWEN_BROWSER_TOOLS, _QWEN_PAPER_TOOLS
 
-Support every non-trivial claim with evidence from your searches. Cite \
-information by wrapping the exact claim span in <cite id="ID1,ID2">...</cite>, \
-where id are snippet IDs from searched results (comma-separated if multiple \
-sources support the same claim).
+# ── Tool definitions (imported from elastic-serving Qwen3Adapter) ─────────────
 
-For short factual answers, also include the answer as \\boxed{answer}. \
-Acknowledge uncertainty when evidence is thin or conflicting."""
-
-# ── Tool definitions (matching elastic-serving Qwen3Adapter) ─────────────────
-
-TOOL_DEFINITIONS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": (
-                "Search the web for information. "
-                "Returns titles, URLs, and snippets."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search query.",
-                    },
-                    "topn": {
-                        "type": "integer",
-                        "description": "Number of results (default: 10).",
-                    },
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "open_url",
-            "description": (
-                "Open and read a webpage by search result ID or full URL."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "description": "Search result number or full URL.",
-                    },
-                },
-                "required": ["id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "paper_search",
-            "description": (
-                "Search Semantic Scholar for academic papers. "
-                "Returns titles, authors, year, venue, and snippets."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search query.",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Max results (default: 5).",
-                    },
-                    "year": {
-                        "type": "string",
-                        "description": "Year filter (e.g. '2024').",
-                    },
-                    "fields_of_study": {
-                        "type": "string",
-                        "description": "E.g. 'Computer Science'.",
-                    },
-                },
-                "required": ["query"],
-            },
-        },
-    },
-]
-
+TOOL_DEFINITIONS = list(_QWEN_BROWSER_TOOLS) + list(_QWEN_PAPER_TOOLS)
 TOOL_DEF_MAP = {t["function"]["name"]: t for t in TOOL_DEFINITIONS}
 
 # ── Tool name + argument mapping ─────────────────────────────────────────────
@@ -366,7 +281,12 @@ def format_tool_response(tool_name: str, env_content: str) -> str:
 def make_function_call_content(
     tool_name: str, arguments: Dict[str, Any], thinking: str = ""
 ) -> str:
-    """Build function_call turn content for LLaMA-Factory."""
+    """Build function_call turn content as JSON wrapped in ``<tool_call>`` tags.
+
+    LLaMA-Factory's ``FunctionFormatter`` parses this JSON and re-formats it
+    into the model-specific format (XML for Qwen3.5, JSON for Qwen3) during
+    tokenization. The ``<think>`` block is preserved as-is.
+    """
     call_json = [{"name": tool_name, "arguments": arguments}]
     json_str = json.dumps(call_json, ensure_ascii=False)
     tool_call_block = f"<tool_call>\n{json_str}\n</tool_call>"

@@ -19,6 +19,10 @@ dependencies = [
 client = [
     "openai>=1.0.0",
 ]
+miro = [
+    "e2b-code-interpreter>=1.6.0",
+    "json-repair>=0.39.0",
+]
 vllm = [
     "vllm>=0.4.0",
 ]

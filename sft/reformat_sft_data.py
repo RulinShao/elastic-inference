@@ -244,9 +244,10 @@ def parse_qwen3_tool_call(
 def make_function_call_content(
     tool_name: str, arguments: Dict[str, Any], thinking: str = ""
 ) -> str:
-    """Build ``function_call`` turn content with JSON tool call.
+    """Build ``function_call`` turn content as JSON in ``<tool_call>`` tags.
 
-    LLaMA-Factory's Qwen3 template expects JSON inside ``<tool_call>`` tags.
+    LLaMA-Factory's ``FunctionFormatter`` parses this JSON and re-formats it
+    into the model-specific format (XML for Qwen3.5) during tokenization.
     """
     call_json = [{"name": tool_name, "arguments": arguments}]
     json_str = json.dumps(call_json, ensure_ascii=False)

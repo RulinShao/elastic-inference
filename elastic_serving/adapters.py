@@ -534,53 +534,71 @@ class Qwen3Adapter(ToolAdapter):
     def parse_tool_call(
         self, text: str
     ) -> Optional[Tuple[str, str, dict]]:
-        """Parse Qwen3 tool call format.
+        """Parse Qwen3/3.5 tool call format.
 
-        Format::
+        Supports both XML (Qwen3.5) and JSON (Qwen3) formats::
 
+            # Qwen3.5 XML format
             <tool_call>
             <function=name>
-            <parameter=key>
-            value
-            </parameter>
+            <parameter=key>value</parameter>
             </function>
             </tool_call>
+
+            # Qwen3 JSON format
+            <tool_call>
+            {"name": "...", "arguments": {...}}
+            </tool_call>
         """
-        # Find <tool_call>...<function=name> block
+        # Strategy 1: Qwen3.5 XML format
         tc_match = re.search(
             r"<tool_call>\s*<function=(\w+)>(.*?)</function>",
             text,
             re.DOTALL,
         )
-        if not tc_match:
-            return None
+        if tc_match:
+            func_name = tc_match.group(1)
+            params_block = tc_match.group(2)
+            args = {}
+            for param_match in re.finditer(
+                r"<parameter=(\w+)>\s*(.*?)\s*</parameter>",
+                params_block,
+                re.DOTALL,
+            ):
+                key = param_match.group(1)
+                value = param_match.group(2).strip()
+                try:
+                    value = json.loads(value)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+                args[key] = value
 
-        func_name = tc_match.group(1)
-        params_block = tc_match.group(2)
+            if func_name in _QWEN_TOOL_MAP:
+                namespace, tool_name = _QWEN_TOOL_MAP[func_name]
+            else:
+                namespace, tool_name = "functions", func_name
+            return namespace, tool_name, args
 
-        # Extract parameters
-        args = {}
-        for param_match in re.finditer(
-            r"<parameter=(\w+)>\s*(.*?)\s*</parameter>",
-            params_block,
+        # Strategy 2: Qwen3 JSON format
+        json_match = re.search(
+            r"<tool_call>\s*(\{.*?\})\s*(?:</tool_call>|$)",
+            text,
             re.DOTALL,
-        ):
-            key = param_match.group(1)
-            value = param_match.group(2).strip()
-            # Try to parse as JSON for structured values
+        )
+        if json_match:
             try:
-                value = json.loads(value)
-            except (json.JSONDecodeError, ValueError):
+                call = json.loads(json_match.group(1))
+                func_name = call.get("name", "")
+                args = call.get("arguments", {})
+                if func_name in _QWEN_TOOL_MAP:
+                    namespace, tool_name = _QWEN_TOOL_MAP[func_name]
+                else:
+                    namespace, tool_name = "functions", func_name
+                return namespace, tool_name, args
+            except (json.JSONDecodeError, KeyError):
                 pass
-            args[key] = value
 
-        # Map Qwen tool name to our namespace/name
-        if func_name in _QWEN_TOOL_MAP:
-            namespace, tool_name = _QWEN_TOOL_MAP[func_name]
-        else:
-            namespace, tool_name = "functions", func_name
-
-        return namespace, tool_name, args
+        return None
 
     def format_tool_response(
         self,
