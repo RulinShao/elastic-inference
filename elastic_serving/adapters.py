@@ -486,7 +486,7 @@ class Qwen3Adapter(ToolAdapter):
 
     @property
     def stop_tokens(self) -> List[str]:
-        return ["</tool_call>"]
+        return ["</tool_call>", "<|im_end|>"]
 
     @property
     def stop_tokens_no_call(self) -> List[str]:
