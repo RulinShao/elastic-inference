@@ -7,11 +7,9 @@ import time
 import traceback
 
 import httpx
-
+import datasets
 
 def load_dataset_rows(args):
-    import datasets
-
     dataset_name = args.dataset
     if not dataset_name:
         raise ValueError("--dataset is required.")
