@@ -8,16 +8,24 @@ __pycache__/
 /logs/
 /results/
 
-# SFT artifacts (data, checkpoints, logs, concrete configs)
+# SFT artifacts (data, checkpoints, logs)
+sft/data/*.json
 sft/data/*.jsonl
-sft/data/*multiturn*.json
-sft/data/*source*.jsonl
 sft/trajectories/
 sft/ckpts/
 sft/logs/
-sft/qwen35-9b-dr-sft.yaml
-sft/qwen35-27b-dr-sft.yaml
+runs/
+
+# SFT cluster-specific configs and scripts (use .example versions)
 sft/train.sh
+sft/eval_browsecomp.sh
+sft/eval_lora_browsecomp.sh
+sft/eval_overfit.sh
+sft/overfit_inference_test.sh
+sft/qwen3*.yaml
+sft/qwen35*.yaml
+!sft/*.example.yaml
+!sft/*.example.sh
 
 # Env lock files
 envs/oss_env/uv.lock

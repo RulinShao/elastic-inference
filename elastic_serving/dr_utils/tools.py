@@ -193,14 +193,18 @@ class BrowserSession:
                 'browser.open({"id": "https://example.com"})'
             )
 
-        # Fetch via Jina Reader (or direct fallback)
-        api_key = os.getenv("JINA_API_KEY", "")
-        try:
-            if api_key:
+        # Fetch page content: try Jina Reader first, fall back to Serper Scrape
+        jina_key = os.getenv("JINA_API_KEY", "")
+        serper_key = os.getenv("SERPER_API_KEY", "")
+        content = None
+
+        # Strategy 1: Jina Reader
+        if jina_key and content is None:
+            try:
                 resp = await self.http_client.get(
                     f"https://r.jina.ai/{target_url}",
                     headers={
-                        "Authorization": f"Bearer {api_key}",
+                        "Authorization": f"Bearer {jina_key}",
                         "Accept": "text/plain",
                         "X-Return-Format": "text",
                     },
@@ -208,13 +212,36 @@ class BrowserSession:
                 )
                 resp.raise_for_status()
                 content = resp.text
-            else:
+            except Exception:
+                pass
+
+        # Strategy 2: Serper Scrape
+        if serper_key and content is None:
+            try:
+                resp = await self.http_client.post(
+                    "https://scrape.serper.dev",
+                    headers={
+                        "X-API-KEY": serper_key,
+                        "Content-Type": "application/json",
+                    },
+                    json={"url": target_url},
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                content = data.get("text", "")
+            except Exception:
+                pass
+
+        # Strategy 3: Direct fetch
+        if content is None:
+            try:
                 resp = await self.http_client.get(
                     target_url, follow_redirects=True, timeout=30
                 )
                 content = resp.text[:20000]
-        except Exception as e:
-            return f"Error opening URL: {e}"
+            except Exception as e:
+                return f"Error opening URL: {e}"
 
         if len(content) > 30000:
             content = content[:30000]

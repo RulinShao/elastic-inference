@@ -40,6 +40,7 @@ TOOL_DEFINITIONS = list(_QWEN_BROWSER_TOOLS) + list(_QWEN_PAPER_TOOLS)
 TOOL_DEF_MAP = {t["function"]["name"]: t for t in TOOL_DEFINITIONS}
 
 # Harmony tool names -> Qwen tool names
+# Includes GPT-oss variants (functions.search, functions.browser, etc.)
 HARMONY_TO_QWEN = {
     "browser.search": "web_search",
     "browser.open": "open_url",
@@ -47,7 +48,58 @@ HARMONY_TO_QWEN = {
     "functions.paper_search": "paper_search",
     "functions.pubmed_search": "pubmed_search",
     "python.execute": "python",
+    # GPT-oss Harmony format variants
+    "functions.search": "web_search",
+    "functions.browser": "open_url",
+    "functions.web_search": "web_search",
+    "functions.open": "open_url",
+    "functions.web": "web_search",
+    "functions.find": "find_text",
 }
+
+# Allowed parameters per tool (others are stripped)
+TOOL_ALLOWED_PARAMS = {
+    "web_search": {"query", "topn"},
+    "open_url": {"id", "cursor", "loc"},
+    "find_text": {"pattern", "cursor"},
+    "paper_search": {"query", "limit", "mode", "year", "fields_of_study", "venue"},
+    "pubmed_search": {"query", "limit"},
+}
+
+# Default values to strip (model should learn to use defaults naturally)
+STRIP_DEFAULT_VALUES = {
+    ("web_search", "topn"): 10,
+}
+
+# Argument key fixes
+ARG_KEY_FIXES = {
+    "top_n": "topn",
+    "num_results": "topn",
+}
+
+
+def clean_tool_args(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Clean tool arguments: fix key names, strip undeclared params, and remove defaults."""
+    cleaned = {}
+    for k, v in args.items():
+        k = ARG_KEY_FIXES.get(k, k)
+        allowed = TOOL_ALLOWED_PARAMS.get(tool_name)
+        if allowed is not None and k not in allowed:
+            continue
+        default = STRIP_DEFAULT_VALUES.get((tool_name, k))
+        if default is not None and v == default:
+            continue
+        # Strip empty string values (e.g. open_url with id="" for scroll operations)
+        if isinstance(v, str) and v.strip() == "":
+            continue
+        # Strip view-source: prefix and invalid ids
+        if tool_name == "open_url" and k == "id":
+            if isinstance(v, str) and v.startswith("view-source:"):
+                v = v[len("view-source:"):]
+            if isinstance(v, str) and not v and not v.strip():
+                continue
+        cleaned[k] = v
+    return cleaned
 
 
 def extract_thinking_from_harmony(content: str) -> str:
@@ -125,7 +177,9 @@ def convert_trajectory(traj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             if tc and tc.get("tool"):
                 harmony_tool = tc["tool"]
                 qwen_name = HARMONY_TO_QWEN.get(harmony_tool, harmony_tool)
-                args = tc.get("args", {})
+                if qwen_name == harmony_tool and "." in harmony_tool:
+                    continue  # skip unmapped Harmony tool names
+                args = clean_tool_args(qwen_name, tc.get("args", {}))
                 used_tools.add(qwen_name)
                 fc = make_function_call_json(qwen_name, args, thinking)
                 new_convs.append({"from": "function_call", "value": fc})
@@ -158,7 +212,7 @@ def convert_trajectory(traj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not valid:
         return None
 
-    tools = [TOOL_DEF_MAP[t] for t in used_tools if t in TOOL_DEF_MAP]
+    tools = TOOL_DEFINITIONS
 
     return {
         "id": f"{traj.get('qid', '')}_{traj.get('traj_idx', 0)}",

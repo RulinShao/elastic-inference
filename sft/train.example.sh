@@ -1,72 +1,45 @@
 #!/bin/bash
-#SBATCH --job-name=dr-sft
-#SBATCH --account=YOUR_ACCOUNT
-#SBATCH --qos=YOUR_QOS
-#SBATCH --partition=YOUR_PARTITION
-#SBATCH --nodes=1
-#SBATCH --gres=gpu:8
-#SBATCH --cpus-per-task=64
-#SBATCH --mem=1600G
-#SBATCH --time=48:00:00
-#SBATCH --output=sft/logs/dr-sft-%j.out
-#SBATCH --error=sft/logs/dr-sft-%j.err
 # ──────────────────────────────────────────────────────────────────────────────
-# Fine-tune Qwen3.5 on deep research tool-calling trajectories
-# using elastic-serving tools (web_search, open_url, find_text,
-# paper_search, pubmed_search, python).
+# Fine-tune Qwen models on deep research tool-calling trajectories
+# using LLaMA-Factory with elastic-serving tools.
 #
 # Usage:
-#   sbatch sft/train.sh                              # default config
-#   sbatch sft/train.sh sft/qwen35-9b-dr-sft.yaml   # custom config
+#   # On a SLURM cluster (adapt SBATCH directives to your cluster):
+#   sbatch sft/train.sh sft/qwen35-9b-sft.example.yaml
 #
-# Masking (automatic via multi-turn sharegpt format):
-#   system, human, observation → masked (not trained on)
-#   function_call, gpt         → trained on
+#   # Local multi-GPU:
+#   bash sft/train.sh sft/qwen35-9b-sft.example.yaml
+#
+# The training config should use dataset_dir pointing to sft/data/
+# with datasets registered in sft/data/dataset_info.json.
 # ──────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LLAMA_FACTORY_DIR="${SCRIPT_DIR}/LLaMA-Factory"
 
-mkdir -p "${SCRIPT_DIR}/logs"
+# Activate your environment (adjust to your setup)
+# source /path/to/conda/etc/profile.d/conda.sh
+# conda activate llamafactory
 
-# Activate your conda env (adjust path as needed)
-source /opt/conda/etc/profile.d/conda.sh
-conda activate llamafactory
-
-# Load .env if present (e.g. for WANDB_API_KEY, HF_TOKEN)
-if [ -f "${LLAMA_FACTORY_DIR}/.env" ]; then
-    source "${LLAMA_FACTORY_DIR}/.env"
-    export $(grep -v '^#' "${LLAMA_FACTORY_DIR}/.env" | xargs)
-fi
-
-export WANDB_PROJECT="${WANDB_PROJECT:-dr-sft}"
-export NCCL_DEBUG="${NCCL_DEBUG:-INFO}"
-export NCCL_TIMEOUT="${NCCL_TIMEOUT:-3600}"
-
-# Install flash-attn on the GPU node if not present (needs CUDA for compilation)
+# Install flash-attn if needed
 python -c "import flash_attn" 2>/dev/null || {
-    echo "Installing flash-attn (source build on GPU node)..."
+    echo "Installing flash-attn (source build)..."
     pip install flash-attn --no-build-isolation --no-cache-dir 2>&1 | tail -5
 }
 
-CONFIG="${1:-${SCRIPT_DIR}/qwen35-9b-dr-sft.yaml}"
+CONFIG="${1:-${SCRIPT_DIR}/qwen35-9b-sft.example.yaml}"
 
 if [ ! -f "$CONFIG" ]; then
-    echo "ERROR: Config file not found: $CONFIG"
+    echo "ERROR: Config not found: $CONFIG"
     exit 1
 fi
 
-# Resolve to absolute path before cd into LLaMA-Factory
 CONFIG="$(realpath "$CONFIG")"
 
 echo "============================================================"
 echo "  LLaMA-Factory SFT — elastic-serving deep research"
 echo "  Config: $CONFIG"
-echo "  LLaMA-Factory dir: $LLAMA_FACTORY_DIR"
-echo "  Job ID: ${SLURM_JOB_ID:-local}"
-echo "  Node:   ${SLURM_NODELIST:-$(hostname)}"
-echo "  GPUs:   ${SLURM_GPUS_ON_NODE:-$(nvidia-smi -L 2>/dev/null | wc -l)}"
 echo "============================================================"
 
 cd "${LLAMA_FACTORY_DIR}"
