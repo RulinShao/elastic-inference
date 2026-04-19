@@ -57,12 +57,12 @@ def create_app(runtime: OSSEngineRuntime, model_name: str) -> FastAPI:
     @app.post("/v1/oss/run_one")
     async def run_one(request: RunOneRequest):
         qid = request.qid or uuid.uuid4().hex
-        messages = await runtime.run_one(
+        result = await runtime.run_one(
             question=request.question,
             qid=qid,
             reasoning_effort=request.reasoning_effort,
         )
-        return {"qid": qid, "messages": messages}
+        return {"qid": qid, **result}
 
     return app
 
