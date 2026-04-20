@@ -194,18 +194,15 @@ class LocalServiceBrowserBackend:
 
         # Merge all results
         title_url_summary_all = []
-        search_records_all = []
         for query_str, title_url_summary, search_records in all_results:
             # Add results from each query
             if title_url_summary:
                 title_url_summary_all.extend(title_url_summary)
-                search_records_all.extend(search_records)
+                self.search_results.extend(search_records)
 
         # If no results from any query, raise error
         if not title_url_summary_all:
             raise BackendError(f"No results returned for any query: {query_list}")
-
-        self.search_results.extend(search_records_all)
 
         html_page = f"""
 <html><body>
@@ -340,18 +337,15 @@ class SerperServiceBrowserBackend:
 
         # Merge all results
         title_url_summary_all = []
-        search_records_all = []
         for query_str, title_url_summary, search_records in all_results:
             # Add results from each query
             if title_url_summary:
                 title_url_summary_all.extend(title_url_summary)
-                search_records_all.extend(search_records)
+                self.search_results.extend(search_records)
 
         # If no results from any query, raise error
         if not title_url_summary_all:
             raise BackendError(f"No results returned for any query: {query_list}")
-
-        self.search_results.extend(search_records_all)
 
         html_page = f"""
 <html><body>
