@@ -12,6 +12,8 @@ Request fields:
 Response fields:
 - `qid`: the resolved question id
 - `messages`: the full trajectory messages produced by the OSS runtime
+- `searched_urls`: unique full URLs returned by browser search calls
+- `search_results`: full browser search result records, including query, rank, title, URL, and summary
 
 The worker-local OSS service is implemented in [`elastic_serving/oss/server.py`](../../elastic_serving/oss/server.py). That service calls [`OSSEngineRuntime.run_one()`](../../elastic_serving/oss/runtime.py#L125), which:
 - creates a browser tool session keyed by `qid`

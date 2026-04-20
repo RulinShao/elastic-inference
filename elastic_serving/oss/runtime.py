@@ -51,6 +51,21 @@ class BrowserPool:
             results.append(msg)
         return [m.to_dict() for m in results]
 
+    def search_results(self, qid: Any) -> List[Dict[str, Any]]:
+        tool = self.sessions.get(qid)
+        if not tool:
+            return []
+        return list(getattr(tool.backend, "search_results", []))
+
+    def searched_urls(self, qid: Any) -> List[str]:
+        return list(
+            {
+                result["url"]
+                for result in self.search_results(qid)
+                if result.get("url")
+            }
+        )
+
     def cleanup(self, qid: Any):
         if qid in self.sessions:
             del self.sessions[qid]
@@ -128,7 +143,7 @@ class OSSEngineRuntime:
         question: str,
         qid: Any,
         reasoning_effort: Optional[str] = None,
-    ) -> List[dict]:
+    ) -> Dict[str, Any]:
         tool_config = self.browser_pool.init_session(qid)
 
         effort = reasoning_effort or self.default_reasoning_effort
@@ -183,7 +198,11 @@ class OSSEngineRuntime:
                     break
 
             conv = Conversation.from_messages(messages)
-            return [m.to_dict() for m in conv.messages]
+            return {
+                "messages": [m.to_dict() for m in conv.messages],
+                "searched_urls": self.browser_pool.searched_urls(qid),
+                "search_results": self.browser_pool.search_results(qid),
+            }
 
         finally:
             self.browser_pool.cleanup(qid)
