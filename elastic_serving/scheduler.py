@@ -376,9 +376,13 @@ class AdaptiveScheduler:
                 "",
             ])
         elif cfg.conda_env:
+            # Try common conda install locations. User's home dirs come
+            # first so per-user envs (the common case on shared HPC) win
+            # over a stale /opt/conda that might exist node-locally
+            # without the user's envs.
             script_lines.extend([
                 "# Activate conda",
-                'for conda_sh in /opt/conda/etc/profile.d/conda.sh "$HOME/miniconda3/etc/profile.d/conda.sh" "$HOME/anaconda3/etc/profile.d/conda.sh"; do',
+                'for conda_sh in "$HOME/miniconda3/etc/profile.d/conda.sh" "$HOME/anaconda3/etc/profile.d/conda.sh" /opt/conda/etc/profile.d/conda.sh; do',
                 '    if [ -f "$conda_sh" ]; then',
                 '        source "$conda_sh"',
                 '        break',
