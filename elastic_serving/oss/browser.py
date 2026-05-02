@@ -1,6 +1,6 @@
 import logging
 from aiohttp import ClientSession
-from typing import AsyncIterator, Iterable, List, Sequence, Union
+from typing import Any, AsyncIterator, Iterable, List, Sequence, Union
 import time,json,html
 import asyncio
 from gpt_oss.tools.simple_browser.page_contents import (
@@ -27,21 +27,23 @@ import os
 
 logger = logging.getLogger(__name__)
 
-def filter_blocked_search_results(
-    results: Iterable[tuple[str, str, str]],
+def filter_blocked_search_records(
+    records: Iterable[dict[str, Any]],
     blocked_substrings: Sequence[str],
-) -> list[tuple[str, str, str]]:
-    """Filter search results whose title/url/snippet match blocked substrings."""
+) -> list[dict[str, Any]]:
+    """Filter search result records whose title/url/snippet match blocked substrings."""
     normalized_blocks = [s.strip().lower() for s in blocked_substrings if s and s.strip()]
     if not normalized_blocks:
-        return list(results)
+        return list(records)
 
     filtered = []
-    for title, url, summary in results:
-        haystack = " ".join(v for v in (title, url, summary) if v).lower()
+    for record in records:
+        haystack = " ".join(
+            str(record.get(key, "")) for key in ("title", "url", "summary")
+        ).lower()
         if any(blocked in haystack for blocked in normalized_blocks):
             continue
-        filtered.append((title, url, summary))
+        filtered.append(record)
     return filtered
 
 
@@ -117,6 +119,7 @@ class LocalServiceBrowserBackend:
     def __init__(self, base_url, blocked_substrings: Sequence[str] | None = None):
         self.base_url = base_url
         self.blocked_substrings = list(blocked_substrings or [])
+        self.search_results: list[dict[str, Any]] = []
         
     async def _post(self, session: ClientSession, endpoint: str, payload: dict) -> dict:
         t0 = time.time()
@@ -142,20 +145,32 @@ class LocalServiceBrowserBackend:
         results = data.get("results", [])
         if not results:
             logger.warning(f"No results returned for query: '{query}'")
-            return query, []
+            return query, [], []
 
-        title_url_summary = []
-        for result in results:
-            title_url_summary.append((
-                html.escape(result['title'], quote=True),
-                html.escape(result['url'], quote=True),
-                html.escape(result['summary'], quote=True)
-            ))
-        title_url_summary = filter_blocked_search_results(
-            title_url_summary,
+        search_records = []
+        for rank, result in enumerate(results, start=1):
+            search_records.append(
+                {
+                    "query": query,
+                    "rank": rank,
+                    "title": result["title"],
+                    "url": result["url"],
+                    "summary": result["summary"],
+                }
+            )
+        search_records = filter_blocked_search_records(
+            search_records,
             self.blocked_substrings,
         )
-        return query, title_url_summary
+        title_url_summary = [
+            (
+                html.escape(record["title"], quote=True),
+                html.escape(record["url"], quote=True),
+                html.escape(record["summary"], quote=True),
+            )
+            for record in search_records
+        ]
+        return query, title_url_summary, search_records
 
     async def search(
         self,
@@ -179,10 +194,11 @@ class LocalServiceBrowserBackend:
 
         # Merge all results
         title_url_summary_all = []
-        for query_str, title_url_summary in all_results:
+        for query_str, title_url_summary, search_records in all_results:
             # Add results from each query
             if title_url_summary:
                 title_url_summary_all.extend(title_url_summary)
+                self.search_results.extend(search_records)
 
         # If no results from any query, raise error
         if not title_url_summary_all:
@@ -236,6 +252,7 @@ class SerperServiceBrowserBackend:
         self.search_url = "https://google.serper.dev/search"
         self.scrape_url = "https://scrape.serper.dev/"
         self.blocked_substrings = list(blocked_substrings or [])
+        self.search_results: list[dict[str, Any]] = []
 
     def _build_headers(self) -> dict[str, str]:
         if not self.api_key:
@@ -268,20 +285,35 @@ class SerperServiceBrowserBackend:
         results = data.get("organic", [])
         if not results:
             logger.warning(f"No results returned for query: '{query}'")
-            return query, []
+            return query, [], []
 
-        title_url_summary = []
-        for result in results:
-            title_url_summary.append((
-                html.escape(result.get('title', ''), quote=True),
-                html.escape(result.get('link', ''), quote=True),
-                html.escape(result.get('snippet', ''), quote=True)
-            ))
-        title_url_summary = filter_blocked_search_results(
-            title_url_summary,
+        search_records = []
+        for rank, result in enumerate(results, start=1):
+            url = result.get("link") or ""
+            if not url:
+                continue
+            search_records.append(
+                {
+                    "query": query,
+                    "rank": rank,
+                    "title": result.get("title") or "",
+                    "url": url,
+                    "summary": result.get("snippet") or "",
+                }
+            )
+        search_records = filter_blocked_search_records(
+            search_records,
             self.blocked_substrings,
         )
-        return query, title_url_summary
+        title_url_summary = [
+            (
+                html.escape(record["title"], quote=True),
+                html.escape(record["url"], quote=True),
+                html.escape(record["summary"], quote=True),
+            )
+            for record in search_records
+        ]
+        return query, title_url_summary, search_records
 
     async def search(
         self,
@@ -305,10 +337,11 @@ class SerperServiceBrowserBackend:
 
         # Merge all results
         title_url_summary_all = []
-        for query_str, title_url_summary in all_results:
+        for query_str, title_url_summary, search_records in all_results:
             # Add results from each query
             if title_url_summary:
                 title_url_summary_all.extend(title_url_summary)
+                self.search_results.extend(search_records)
 
         # If no results from any query, raise error
         if not title_url_summary_all:
