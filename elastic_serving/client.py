@@ -82,6 +82,15 @@ class SchedulerClient:
     def list_models(self) -> Dict[str, Any]:
         return self._call("GET", "/v1/models")
 
+    def cancel_worker(self, worker_id: str) -> Dict[str, Any]:
+        """Gracefully scale down: deregister this worker from the proxy
+        and scancel its SLURM job (if no other workers share the node).
+
+        Returns ``{"deregistered": bool, "scancel_ok": bool,
+        "slurm_job_id": ..., "remaining_workers": N}``.
+        """
+        return self._call("POST", f"/cancel_worker/{worker_id}")
+
 
 def get_openai_client(scheduler_url: str = "http://localhost:8780", api_key: str = "EMPTY"):
     """
@@ -171,6 +180,16 @@ def cmd_health(args):
         sys.exit(1)
 
 
+def cmd_cancel_worker(args):
+    """Gracefully scale down by removing one worker."""
+    client = SchedulerClient(args.scheduler_url)
+    result = client.cancel_worker(args.worker_id)
+    print(f"Worker {args.worker_id} cancelled:")
+    for k, v in result.items():
+        if k != "status":
+            print(f"  {k}: {v}")
+
+
 def cmd_test(args):
     """Send a test chat completion request."""
     client = get_openai_client(args.scheduler_url)
@@ -211,6 +230,13 @@ def main():
     sub.add_argument("--max-tokens", type=int, default=128)
     sub.add_argument("--temperature", type=float, default=0.7)
 
+    sub = subparsers.add_parser(
+        "cancel-worker",
+        help="Gracefully remove a worker (deregister from proxy + scancel "
+             "its SLURM job if it's the last worker on that node)",
+    )
+    sub.add_argument("worker_id", type=str, help="Worker ID to cancel")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -222,6 +248,7 @@ def main():
         "models": cmd_models,
         "health": cmd_health,
         "test": cmd_test,
+        "cancel-worker": cmd_cancel_worker,
     }
     commands[args.command](args)
 

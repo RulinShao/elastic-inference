@@ -188,6 +188,49 @@ class AdaptiveScheduler:
                 return True
             return False
 
+    def cancel_worker(self, worker_id: str) -> Dict[str, Any]:
+        """Gracefully scale down: remove worker from RR + scancel its SLURM
+        job. The worker stops accepting new requests (proxy won't pick it).
+        In-flight requests on that worker may fail and need client retry.
+
+        Returns ``{"deregistered": bool, "scancel_ok": bool, "slurm_job_id":
+        ..., "remaining_workers": N}``.
+        """
+        with self.lock:
+            w = self.workers.get(worker_id)
+            if not w:
+                return {"deregistered": False, "scancel_ok": False,
+                        "slurm_job_id": None, "remaining_workers": len(self._rr_workers)}
+            slurm_jid = w.slurm_job_id
+            # Remove from registry first so RR stops picking it
+            self.workers.pop(worker_id, None)
+            self._rebuild_rr()
+            remaining = len(self._rr_workers)
+            # If this was the last worker on the SLURM job, also cancel
+            # the job so we don't keep paying for an idle GPU node.
+            siblings = [w2 for w2 in self.workers.values()
+                        if w2.slurm_job_id == slurm_jid]
+            should_scancel = (slurm_jid is not None) and (not siblings)
+        scancel_ok = False
+        if should_scancel:
+            try:
+                r = subprocess.run(
+                    ["scancel", str(slurm_jid)],
+                    capture_output=True, text=True, timeout=15,
+                )
+                scancel_ok = (r.returncode == 0)
+                logger.info(
+                    f"Cancelled SLURM job {slurm_jid} after deregistering "
+                    f"worker {worker_id} (last on node)")
+            except Exception as e:
+                logger.warning(f"scancel {slurm_jid} failed: {e}")
+        return {
+            "deregistered": True,
+            "scancel_ok": scancel_ok,
+            "slurm_job_id": slurm_jid,
+            "remaining_workers": remaining,
+        }
+
     def _rebuild_rr(self):
         """Rebuild round-robin cycle for READY workers. Must hold self.lock."""
         self._rr_workers = [
@@ -568,6 +611,17 @@ def create_app(scheduler: AdaptiveScheduler) -> FastAPI:
             raise HTTPException(status_code=404, detail="Worker not found")
         return {"status": "ok", "message": f"Worker {worker_id} deregistered"}
 
+    @app.post("/cancel_worker/{worker_id}")
+    async def cancel_worker(worker_id: str):
+        """Gracefully scale down: remove worker from RR proxy + scancel
+        its SLURM job (if no other workers share that node). Use this to
+        shrink the cluster when load is light without hurting other
+        workers' in-flight requests."""
+        result = scheduler.cancel_worker(worker_id)
+        if not result["deregistered"]:
+            raise HTTPException(status_code=404, detail="Worker not found")
+        return {"status": "ok", **result}
+
     @app.get("/cluster_status")
     async def cluster_status():
         return scheduler.get_cluster_status()
@@ -800,6 +854,10 @@ Examples:
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--no-prefix-caching", action="store_true",
                         help="Disable prefix caching on workers (needed for Mamba/hybrid architectures)")
+    parser.add_argument("--no-exclusive", action="store_true",
+                        help="Don't request exclusive node access (allows packing "
+                             "into partially-used 'mix' nodes — much faster scheduling "
+                             "when full nodes are scarce)")
     args = parser.parse_args()
 
     # Build config
@@ -823,6 +881,7 @@ Examples:
         "served_model_name": args.served_model_name,
         "engine_extra_args": args.engine_extra_args,
         "enable_prefix_caching": False if args.no_prefix_caching else None,
+        "exclusive": False if args.no_exclusive else None,
         "time_limit": args.time_limit,
         "constraint": args.constraint,
         "slurm_extra": args.slurm_extra,
